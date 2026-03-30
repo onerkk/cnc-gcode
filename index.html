@@ -27,6 +27,9 @@ input[type=checkbox]{accent-color:#f0803c;width:16px;height:16px}
 <body>
 <div id="root"></div>
 <script type="text/babel">
+// ★★★ 設定你的 Render 後端網址 ★★★
+const API_URL = "https://cnc-api-zsl9.onrender.com";
+
 const {useState,useRef,useCallback,useMemo}=React;
 
 // ═══ THREAD DATABASE ═══
@@ -361,8 +364,10 @@ function App(){
   const analyze=useCallback(async()=>{
     if(!b64)return;setBusy(true);setAiErr(null);
     try{
-      const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:1000,messages:[{role:"user",content:[{type:"image",source:{type:"base64",media_type:"image/png",data:b64}},{type:"text",text:'你是資深CNC車床工程師。分析此工程圖提取參數。只回JSON：{"threadSpec":"M8×1.25或null","threadCategory":"ISO 公制粗牙等或null","totalLength":數字,"headDiameter":數字,"headLength":數字,"headType":"hex等","shankDiameter":數字,"threadLength":數字,"chamferSize":數字,"hasUndercut":bool,"notes":"備註"}'}]}]})});
-      const data=await res.json();const txt=data.content?.map(c=>c.text||"").join("")||"";
+      const res=await fetch(API_URL+"/api/analyze",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({image:b64,media_type:"image/png"})});
+      const data=await res.json();
+      if(data.error){throw new Error(data.error);}
+      const txt=data.result||"";
       const parsed=JSON.parse(txt.replace(/```json|```/g,"").trim());setAiRes(parsed);
       setP(prev=>({...prev,...(parsed.threadCategory&&THREAD_DB[parsed.threadCategory]?{threadCategory:parsed.threadCategory}:{}),...(parsed.threadSpec?{threadSpec:parsed.threadSpec}:{}),...(parsed.totalLength?{totalLength:parsed.totalLength}:{}),...(parsed.headDiameter?{headDiameter:parsed.headDiameter}:{}),...(parsed.headLength?{headLength:parsed.headLength}:{}),...(parsed.headType?{headType:parsed.headType}:{}),...(parsed.shankDiameter?{shankDiameter:parsed.shankDiameter,barDiameter:Math.ceil(parsed.shankDiameter)+2}:{}),...(parsed.threadLength?{threadLength:parsed.threadLength}:{}),...(parsed.chamferSize?{chamferSize:parsed.chamferSize}:{}),...(parsed.hasUndercut!==undefined?{hasUndercut:parsed.hasUndercut}:{})}));
     }catch(err){setAiErr("AI分析失敗: "+err.message);}setBusy(false);
