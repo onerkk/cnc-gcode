@@ -342,6 +342,7 @@ function App(){
   const[step,setStep]=useState(0);
   const[img,setImg]=useState(null);
   const[b64,setB64]=useState(null);
+  const[fileType,setFileType]=useState("image/png");
   const[busy,setBusy]=useState(false);
   const[aiRes,setAiRes]=useState(null);
   const[aiErr,setAiErr]=useState(null);
@@ -359,19 +360,19 @@ function App(){
   const ct=useMemo(()=>{let pitch=1.25;if(p.threadSpec!=="自訂"&&p.threadCategory&&THREAD_DB[p.threadCategory]?.[p.threadSpec])pitch=THREAD_DB[p.threadCategory][p.threadSpec].pitch;else if(p.customThread.pitch)pitch=p.customThread.pitch;return calcCycleTime({...p,threadPitch:pitch});},[p]);
   const tools=useMemo(()=>getSetupTools(p),[p]);
 
-  const onUpload=useCallback(e=>{const f=e.target.files[0];if(!f)return;setImg(URL.createObjectURL(f));setAiRes(null);setAiErr(null);const r=new FileReader();r.onload=()=>setB64(r.result.split(",")[1]);r.readAsDataURL(f);},[]);
+  const onUpload=useCallback(e=>{const f=e.target.files[0];if(!f)return;setImg(URL.createObjectURL(f));setAiRes(null);setAiErr(null);setFileType(f.type||"image/png");const r=new FileReader();r.onload=()=>setB64(r.result.split(",")[1]);r.readAsDataURL(f);},[]);
 
   const analyze=useCallback(async()=>{
     if(!b64)return;setBusy(true);setAiErr(null);
     try{
-      const res=await fetch(API_URL+"/api/analyze",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({image:b64,media_type:"image/png"})});
+      const res=await fetch(API_URL+"/api/analyze",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({image:b64,media_type:fileType})});
       const data=await res.json();
       if(data.error){throw new Error(data.error);}
       const txt=data.result||"";
       const parsed=JSON.parse(txt.replace(/```json|```/g,"").trim());setAiRes(parsed);
       setP(prev=>({...prev,...(parsed.threadCategory&&THREAD_DB[parsed.threadCategory]?{threadCategory:parsed.threadCategory}:{}),...(parsed.threadSpec?{threadSpec:parsed.threadSpec}:{}),...(parsed.totalLength?{totalLength:parsed.totalLength}:{}),...(parsed.headDiameter?{headDiameter:parsed.headDiameter}:{}),...(parsed.headLength?{headLength:parsed.headLength}:{}),...(parsed.headType?{headType:parsed.headType}:{}),...(parsed.shankDiameter?{shankDiameter:parsed.shankDiameter,barDiameter:Math.ceil(parsed.shankDiameter)+2}:{}),...(parsed.threadLength?{threadLength:parsed.threadLength}:{}),...(parsed.chamferSize?{chamferSize:parsed.chamferSize}:{}),...(parsed.hasUndercut!==undefined?{hasUndercut:parsed.hasUndercut}:{})}));
     }catch(err){setAiErr("AI分析失敗: "+err.message);}setBusy(false);
-  },[b64]);
+  },[b64,fileType]);
 
   const generate=()=>{if(val.errors.length)return;setGcode(generateGCode(p));setStep(3);setTab("gcode");};
   const dl=(content,name)=>{const b=new Blob([content],{type:"text/plain;charset=utf-8"});const u2=URL.createObjectURL(b);const a=document.createElement("a");a.href=u2;a.download=name;a.click();URL.revokeObjectURL(u2);};
