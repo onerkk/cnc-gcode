@@ -1,0 +1,533 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CNC G-Code Generator Pro v3.0</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body,#root{height:100%;width:100%}
+body{background:#050810;color:#a8b8c8;font-family:'Noto Sans TC','SF Pro',-apple-system,sans-serif}
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-track{background:#0a0e16}
+::-webkit-scrollbar-thumb{background:#1e2a3a;border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:#2a3a4a}
+input[type=number]::-webkit-inner-spin-button{opacity:1}
+select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%234a5a6a'%3E%3Cpath d='M2 4l4 4 4-4'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 8px center}
+input:focus,select:focus{border-color:#f0803c !important;outline:none}
+button:hover{opacity:0.85}
+input[type=checkbox]{accent-color:#f0803c;width:16px;height:16px}
+@media(max-width:600px){.grid3{grid-template-columns:1fr 1fr !important}.grid4{grid-template-columns:1fr 1fr !important}}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const {useState,useRef,useCallback,useMemo}=React;
+
+// ═══ THREAD DATABASE ═══
+const THREAD_DB={"ISO 公制粗牙":{"M2×0.4":{major:2,pitch:0.4,minor:1.567,angle:60},"M2.5×0.45":{major:2.5,pitch:0.45,minor:2.013,angle:60},"M3×0.5":{major:3,pitch:0.5,minor:2.459,angle:60},"M4×0.7":{major:4,pitch:0.7,minor:3.242,angle:60},"M5×0.8":{major:5,pitch:0.8,minor:4.134,angle:60},"M6×1.0":{major:6,pitch:1.0,minor:4.917,angle:60},"M8×1.25":{major:8,pitch:1.25,minor:6.647,angle:60},"M10×1.5":{major:10,pitch:1.5,minor:8.376,angle:60},"M12×1.75":{major:12,pitch:1.75,minor:10.106,angle:60},"M14×2.0":{major:14,pitch:2.0,minor:11.835,angle:60},"M16×2.0":{major:16,pitch:2.0,minor:13.835,angle:60},"M18×2.5":{major:18,pitch:2.5,minor:15.294,angle:60},"M20×2.5":{major:20,pitch:2.5,minor:17.294,angle:60},"M22×2.5":{major:22,pitch:2.5,minor:19.294,angle:60},"M24×3.0":{major:24,pitch:3.0,minor:20.752,angle:60},"M27×3.0":{major:27,pitch:3.0,minor:23.752,angle:60},"M30×3.5":{major:30,pitch:3.5,minor:26.211,angle:60},"M33×3.5":{major:33,pitch:3.5,minor:29.211,angle:60},"M36×4.0":{major:36,pitch:4.0,minor:31.670,angle:60},"M42×4.5":{major:42,pitch:4.5,minor:37.129,angle:60},"M48×5.0":{major:48,pitch:5.0,minor:42.587,angle:60}},"ISO 公制細牙":{"M6×0.75":{major:6,pitch:0.75,minor:5.188,angle:60},"M8×0.75":{major:8,pitch:0.75,minor:7.188,angle:60},"M8×1.0":{major:8,pitch:1.0,minor:6.917,angle:60},"M10×1.0":{major:10,pitch:1.0,minor:8.917,angle:60},"M10×1.25":{major:10,pitch:1.25,minor:8.647,angle:60},"M12×1.0":{major:12,pitch:1.0,minor:10.917,angle:60},"M12×1.25":{major:12,pitch:1.25,minor:10.647,angle:60},"M12×1.5":{major:12,pitch:1.5,minor:10.376,angle:60},"M14×1.5":{major:14,pitch:1.5,minor:12.376,angle:60},"M16×1.0":{major:16,pitch:1.0,minor:14.917,angle:60},"M16×1.5":{major:16,pitch:1.5,minor:14.376,angle:60},"M20×1.5":{major:20,pitch:1.5,minor:18.376,angle:60},"M20×2.0":{major:20,pitch:2.0,minor:17.835,angle:60},"M24×2.0":{major:24,pitch:2.0,minor:21.835,angle:60},"M30×2.0":{major:30,pitch:2.0,minor:27.835,angle:60}},"UNC 美制粗牙":{"1/4-20 UNC":{major:6.35,pitch:1.27,minor:5.0,angle:60},"5/16-18 UNC":{major:7.938,pitch:1.411,minor:6.401,angle:60},"3/8-16 UNC":{major:9.525,pitch:1.5875,minor:7.798,angle:60},"7/16-14 UNC":{major:11.113,pitch:1.814,minor:9.144,angle:60},"1/2-13 UNC":{major:12.7,pitch:1.954,minor:10.592,angle:60},"5/8-11 UNC":{major:15.875,pitch:2.309,minor:13.386,angle:60},"3/4-10 UNC":{major:19.05,pitch:2.54,minor:16.307,angle:60},"7/8-9 UNC":{major:22.225,pitch:2.822,minor:19.177,angle:60},"1-8 UNC":{major:25.4,pitch:3.175,minor:21.971,angle:60}},"UNF 美制細牙":{"1/4-28 UNF":{major:6.35,pitch:0.907,minor:5.376,angle:60},"5/16-24 UNF":{major:7.938,pitch:1.058,minor:6.797,angle:60},"3/8-24 UNF":{major:9.525,pitch:1.058,minor:8.384,angle:60},"7/16-20 UNF":{major:11.113,pitch:1.27,minor:9.738,angle:60},"1/2-20 UNF":{major:12.7,pitch:1.27,minor:11.325,angle:60},"5/8-18 UNF":{major:15.875,pitch:1.411,minor:14.338,angle:60},"3/4-16 UNF":{major:19.05,pitch:1.5875,minor:17.323,angle:60}},"BSP 英制管牙":{"G1/8 BSP":{major:9.728,pitch:0.907,minor:8.566,angle:55},"G1/4 BSP":{major:13.157,pitch:1.337,minor:11.445,angle:55},"G3/8 BSP":{major:16.662,pitch:1.337,minor:14.950,angle:55},"G1/2 BSP":{major:20.955,pitch:1.814,minor:18.631,angle:55},"G3/4 BSP":{major:26.441,pitch:1.814,minor:24.117,angle:55},"G1 BSP":{major:33.249,pitch:2.309,minor:30.291,angle:55}},"NPT 美制錐管牙":{"1/8-27 NPT":{major:10.287,pitch:0.941,minor:8.791,angle:60,taper:0.0625},"1/4-18 NPT":{major:13.716,pitch:1.411,minor:11.889,angle:60,taper:0.0625},"3/8-18 NPT":{major:17.145,pitch:1.411,minor:15.318,angle:60,taper:0.0625},"1/2-14 NPT":{major:21.223,pitch:1.814,minor:18.896,angle:60,taper:0.0625},"3/4-14 NPT":{major:26.568,pitch:1.814,minor:24.241,angle:60,taper:0.0625},"1-11.5 NPT":{major:33.228,pitch:2.209,minor:30.398,angle:60,taper:0.0625}},"ACME 梯形牙(29°)":{"Tr10×2":{major:10,pitch:2.0,minor:7.5,angle:29},"Tr12×3":{major:12,pitch:3.0,minor:8.5,angle:29},"Tr16×4":{major:16,pitch:4.0,minor:11.5,angle:29},"Tr20×4":{major:20,pitch:4.0,minor:15.5,angle:29},"Tr24×5":{major:24,pitch:5.0,minor:18.5,angle:29},"Tr30×6":{major:30,pitch:6.0,minor:23.0,angle:29}}};
+
+// ═══ MATERIALS ═══
+const MATERIALS={"S45C 中碳鋼":{hardness:"HB200",rough:{Vc:180,f:0.25,ap:2.0},finish:{Vc:220,f:0.08,ap:0.3},thread:{Vc:80},cutoff:{Vc:100,f:0.06},drill:{Vc:90,f:0.12}},"S50C 中碳鋼":{hardness:"HB220",rough:{Vc:160,f:0.22,ap:1.8},finish:{Vc:200,f:0.08,ap:0.3},thread:{Vc:70},cutoff:{Vc:90,f:0.05},drill:{Vc:80,f:0.10}},"SCM440 合金鋼":{hardness:"HB280",rough:{Vc:140,f:0.20,ap:1.5},finish:{Vc:180,f:0.06,ap:0.2},thread:{Vc:60},cutoff:{Vc:80,f:0.05},drill:{Vc:70,f:0.08}},"SCM415 滲碳鋼":{hardness:"HB180",rough:{Vc:160,f:0.22,ap:1.8},finish:{Vc:200,f:0.07,ap:0.25},thread:{Vc:70},cutoff:{Vc:90,f:0.05},drill:{Vc:80,f:0.10}},"SUS304 不鏽鋼":{hardness:"HB187",rough:{Vc:120,f:0.18,ap:1.5},finish:{Vc:150,f:0.06,ap:0.2},thread:{Vc:50},cutoff:{Vc:70,f:0.04},drill:{Vc:60,f:0.08}},"SUS316 不鏽鋼":{hardness:"HB217",rough:{Vc:100,f:0.15,ap:1.2},finish:{Vc:130,f:0.05,ap:0.2},thread:{Vc:45},cutoff:{Vc:60,f:0.04},drill:{Vc:50,f:0.07}},"SUS410 不鏽鋼":{hardness:"HB200",rough:{Vc:130,f:0.18,ap:1.5},finish:{Vc:160,f:0.06,ap:0.2},thread:{Vc:55},cutoff:{Vc:75,f:0.05},drill:{Vc:65,f:0.08}},"A6061-T6 鋁合金":{hardness:"HB95",rough:{Vc:350,f:0.30,ap:3.0},finish:{Vc:450,f:0.08,ap:0.3},thread:{Vc:150},cutoff:{Vc:200,f:0.08},drill:{Vc:180,f:0.15}},"A7075-T6 鋁合金":{hardness:"HB150",rough:{Vc:300,f:0.25,ap:2.5},finish:{Vc:400,f:0.06,ap:0.2},thread:{Vc:130},cutoff:{Vc:180,f:0.07},drill:{Vc:160,f:0.12}},"A2024-T4 鋁合金":{hardness:"HB120",rough:{Vc:320,f:0.28,ap:2.8},finish:{Vc:420,f:0.07,ap:0.25},thread:{Vc:140},cutoff:{Vc:190,f:0.07},drill:{Vc:170,f:0.13}},"C3604 快削黃銅":{hardness:"HB100",rough:{Vc:300,f:0.25,ap:2.5},finish:{Vc:400,f:0.06,ap:0.2},thread:{Vc:120},cutoff:{Vc:180,f:0.08},drill:{Vc:150,f:0.12}},"C3771 鍛造黃銅":{hardness:"HB120",rough:{Vc:250,f:0.22,ap:2.0},finish:{Vc:350,f:0.06,ap:0.2},thread:{Vc:110},cutoff:{Vc:160,f:0.07},drill:{Vc:130,f:0.10}},"Ti-6Al-4V 鈦合金":{hardness:"HRC36",rough:{Vc:55,f:0.15,ap:1.0},finish:{Vc:75,f:0.05,ap:0.15},thread:{Vc:25},cutoff:{Vc:30,f:0.03},drill:{Vc:25,f:0.06}},"Inconel 718 鎳基合金":{hardness:"HRC40",rough:{Vc:35,f:0.12,ap:0.8},finish:{Vc:50,f:0.04,ap:0.1},thread:{Vc:18},cutoff:{Vc:20,f:0.02},drill:{Vc:18,f:0.05}},"POM 聚甲醛":{hardness:"—",rough:{Vc:250,f:0.20,ap:2.0},finish:{Vc:350,f:0.05,ap:0.2},thread:{Vc:100},cutoff:{Vc:150,f:0.06},drill:{Vc:120,f:0.10}},"PEEK 聚醚醚酮":{hardness:"—",rough:{Vc:200,f:0.15,ap:1.5},finish:{Vc:300,f:0.04,ap:0.15},thread:{Vc:80},cutoff:{Vc:120,f:0.05},drill:{Vc:100,f:0.08}}};
+
+const CONTROLLERS={"FANUC 0i-TF":"fanuc","FANUC 0i-TF Plus":"fanuc","FANUC 31i":"fanuc","FANUC 32i":"fanuc","OKUMA OSP-P300":"okuma","OKUMA OSP-P200":"okuma","OKUMA OSP-P100":"okuma","Mitsubishi M80":"mitsubishi","Mitsubishi M800":"mitsubishi","Siemens 828D":"siemens","Siemens 840D":"siemens"};
+
+const calcRPM=(Vc,d)=>d<=0?2000:Math.round((Vc*1000)/(Math.PI*d));
+
+function calcCycleTime(p){
+  const mat=MATERIALS[p.material]||MATERIALS["S45C 中碳鋼"];
+  const bar=p.barDiameter||10,sd=p.shankDiameter||8,tl=p.totalLength||30,thLen=p.threadLength||20,pitch=p.threadPitch||1.25;
+  const fT=(bar/2)/(calcRPM(mat.rough.Vc,bar/2)*mat.rough.f)*60;
+  const rP=Math.ceil((bar-sd)/2/mat.rough.ap);
+  const rT=rP*(tl/(calcRPM(mat.rough.Vc,(bar+sd)/2)*mat.rough.f)*60);
+  const finT=tl/(calcRPM(mat.finish.Vc,sd)*mat.finish.f)*60;
+  const thP=Math.max(6,Math.ceil(((bar-sd)*0.35)/0.1))+2;
+  const thT=thP*(thLen/(calcRPM(mat.thread.Vc,sd)*pitch)*60);
+  const cT=(bar/2)/(calcRPM(mat.cutoff.Vc,bar/2)*mat.cutoff.f)*60;
+  const total=fT+rT+finT+thT+cT+8;
+  return{face:Math.round(fT),rough:Math.round(rT),finish:Math.round(finT),thread:Math.round(thT),cutoff:Math.round(cT),rapid:8,total:Math.round(total)};
+}
+
+function validateParams(p){
+  const w=[],e=[];
+  if(p.barDiameter<=(p.headDiameter||0))e.push("棒材直徑必須大於頭部直徑");
+  if(p.barDiameter<=(p.shankDiameter||0))e.push("棒材直徑必須大於桿部直徑");
+  if((p.threadLength||0)>(p.totalLength||0))e.push("螺紋長度不能超過總長度");
+  if((p.headLength||0)>(p.totalLength||0))e.push("頭部長度不能超過總長度");
+  if((p.headLength||0)+(p.threadLength||0)>(p.totalLength||0))w.push("頭部+螺紋超過總長，可能無退刀槽空間");
+  const mat=MATERIALS[p.material];
+  if(mat){const rpm=calcRPM(mat.finish.Vc,p.shankDiameter||8);if(rpm>4000)w.push("精車轉速可能達"+rpm+"RPM，確認主軸上限");}
+  if(p.tolerance<0.005)w.push("公差<0.005mm需精密車床");
+  if(p.barDiameter>42)w.push("棒材>Ø42mm，確認夾頭容量");
+  return{warnings:w,errors:e};
+}
+
+// ═══ G-CODE ENGINE ═══
+function generateGCode(params){
+  const{controller,material,threadCategory,threadSpec,customThread,barDiameter,totalLength,headDiameter,headLength,chamferSize,threadLength,shankDiameter,hasUndercut,undercutWidth,undercutDiameter,tolerance,safeZ,partOffWidth,threadInfeed,useG96,maxRPM,coolantType,useTNRC,addCenterDrill,centerDrillDepth,hasLeadChamfer}=params;
+  const ctrl=CONTROLLERS[controller]||"fanuc";
+  const mat=MATERIALS[material]||MATERIALS["S45C 中碳鋼"];
+  let thread;
+  if(threadSpec==="自訂")thread=customThread;
+  else if(threadCategory&&THREAD_DB[threadCategory])thread=THREAD_DB[threadCategory][threadSpec];
+  else thread={major:8,pitch:1.25,minor:6.647,angle:60};
+  if(!thread||!thread.major)return"// 錯誤：螺紋參數未設定";
+
+  const bar=barDiameter||thread.major+2,headDia=headDiameter||thread.major*1.5,headLen=headLength||thread.major*0.7;
+  const totalLen=totalLength||30,threadLen=threadLength||20,chamfer=chamferSize||0.5;
+  const safe=safeZ||5,shankDia=shankDiameter||thread.major,spdLim=maxRPM||3500;
+  const thAngle=thread.angle||60;
+  const roughRPM=useG96?mat.rough.Vc:calcRPM(mat.rough.Vc,(bar+shankDia)/2);
+  const finishRPM=useG96?mat.finish.Vc:calcRPM(mat.finish.Vc,shankDia);
+  const threadRPM=calcRPM(mat.thread.Vc,shankDia);
+  const cutoffRPM=useG96?mat.cutoff.Vc:calcRPM(mat.cutoff.Vc,bar/2);
+  const drillRPM=calcRPM(mat.drill.Vc,3);
+  const rf=mat.rough.f,ff=mat.finish.f,rd=mat.rough.ap,cf=mat.cutoff.f;
+  const thDepth=(thread.major-thread.minor)/2;
+  const thDepthUm=Math.round(thDepth*1000);
+  const firstCut=Math.round(thDepthUm*0.3);
+  const minCut=Math.max(10,Math.round(thDepthUm*0.05));
+  const thTool=thAngle===55?"T0707":thAngle===29?"T0808":"T0303";
+  const coolM=coolantType==="mist"?"M07":"M08";
+
+  let L=[];
+  const a=l=>L.push(l);
+  const cm=t=>{ctrl==="siemens"?a("; "+t):a("("+t+")");};
+  const b=()=>a("");
+  const X=v=>"X"+v.toFixed(3);
+  const Z=v=>"Z"+v.toFixed(3);
+  const spd=(vc,rpm)=>useG96?"G96 S"+vc:"G97 S"+rpm;
+
+  if(ctrl==="fanuc"||ctrl==="mitsubishi"){a("%");a("O0001");}
+  else if(ctrl==="okuma"){a("G10 (CNC SCREW MACHINING)");}
+  else{a("%_N_SCREW_MPF");}
+
+  cm("════════════════════════════════════════════════");
+  cm("  CNC 車床加工程式 — 螺絲/軸件");
+  cm("  CNC G-Code Generator v3.0 Pro");
+  cm("════════════════════════════════════════════════");
+  cm("  控制器: "+controller);
+  cm("  材  質: "+material+" ("+mat.hardness+")");
+  cm("  螺  紋: "+(threadSpec==="自訂"?"自訂":threadSpec)+" "+thAngle+"°"+(thread.taper?" 錐管":""));
+  cm("  尺  寸: L="+totalLen+" 頭Ø"+headDia+" 桿Ø"+shankDia+" 棒Ø"+bar);
+  cm("  公  差: ±"+(tolerance||0.02)+"mm");
+  cm("────────────────────────────────────────────────");
+  cm("  粗車 Vc="+mat.rough.Vc+" f="+rf+" ap="+rd);
+  cm("  精車 Vc="+mat.finish.Vc+" f="+ff+" ap="+mat.finish.ap);
+  cm("  螺紋 Vc="+mat.thread.Vc+" depth="+thDepth.toFixed(3)+"mm ("+thDepthUm+"μm)");
+  cm("  切斷 Vc="+mat.cutoff.Vc+" f="+cf);
+  cm("────────────────────────────────────────────────");
+  cm("  T01=外徑粗車 T02=外徑精車 T03=螺紋60°");
+  cm("  T04=切斷 T05=中心鑽 T07=螺紋55° T08=螺紋29°");
+  cm("════════════════════════════════════════════════");
+  b();
+
+  cm("═══ 安全起始塊 ═══");
+  if(ctrl==="fanuc"||ctrl==="mitsubishi"){a("N10 G40 G80 G99");a("N11 G28 U0 W0");a("N12 G50 S"+spdLim);}
+  else if(ctrl==="okuma"){a("N10 G40 G80");a("N11 G28 W0");a("N12 G28 U0");a("N13 G50 S"+spdLim);}
+  else{a("N10 G40 G80");a("N11 G28 U0 W0");a("N12 LIMS="+spdLim);}
+  b();
+
+  if(addCenterDrill){
+    cm("═══ 工序0: 中心鑽孔 ═══");
+    const cdD=centerDrillDepth||3;
+    if(ctrl==="okuma"){a("N100 T0505");}else if(ctrl==="siemens"){a("N100 T5D5");}else{a("N100 G00 T0505");}
+    a("G97 S"+drillRPM+" M03");a(coolM);
+    a("G00 X0 "+Z(safe));a("G00 Z2.0");
+    a("G01 "+Z(-cdD)+" F"+mat.drill.f);a("G04 P500");cm("排屑停留");a("G00 "+Z(safe));b();
+  }
+
+  cm("═══ 工序1: 端面車削 ═══");
+  if(ctrl==="okuma"){a("N200 T0101");}else if(ctrl==="siemens"){a("N200 T1D1");}else{a("N200 G00 T0101");}
+  a(spd(mat.rough.Vc,roughRPM)+" M03");a(coolM);
+  a("G00 "+X(bar+2)+" "+Z(safe));a("G00 "+Z(0.3));
+  a("G01 "+X(bar+0.5)+" Z0 F"+rf);a("G01 X-1.6 F"+rf);
+  cm("端面精修");a("G00 "+X(bar+0.5)+" "+Z(0.1));
+  a("G01 "+X(bar+0.5)+" Z0 F"+ff);a("G01 X-1.6 F"+ff);
+  a("G00 "+Z(safe));b();
+
+  cm("═══ 工序2: 粗車外徑 G71 複合循環 ═══");
+  cm("  ap="+rd+" f="+rf+" 精修餘量 X=0.3 Z=0.1");
+  if(ctrl==="siemens"){
+    a("G00 "+X(bar+2)+" "+Z(safe));a(spd(mat.rough.Vc,roughRPM)+" M03");
+    cm("Siemens CYCLE95");a('CYCLE95("CONTOUR1",'+rd+",0.3,0.1,,"+rf+",,,,0.5)");
+  }else{
+    a("G00 "+X(bar+2)+" "+Z(safe));
+    a("G71 U"+rd+" R0.5");
+    if(ctrl==="okuma")a("G71 P300 Q400 U0.3 W0.1 F"+rf+" S"+(useG96?mat.rough.Vc:roughRPM));
+    else a("G71 P300 Q400 U0.3 W0.1 F"+rf);
+  }
+  b();
+
+  cm("═══ 精車輪廓 N300-N400 ═══");
+  let zP=0;
+  a("N300 G00 "+X(headDia-chamfer*2)+" "+Z(chamfer));
+  a("G01 "+X(headDia)+" Z0 F"+ff);
+  zP=-headLen;a("G01 "+Z(zP));
+  if(headDia>shankDia+0.1){const tr=Math.min((headDia-shankDia)/2,2.0);a("G01 "+X(shankDia)+" "+Z(zP-tr));zP-=tr;}
+  else{a("G01 "+X(shankDia));}
+  const thStartZ=-(totalLen-threadLen);
+  if(hasUndercut){
+    const ucW=undercutWidth||2,ucD=undercutDiameter||(thread.minor-0.3);
+    if(zP>thStartZ+ucW)a("G01 "+Z(thStartZ+ucW));
+    a("G01 "+X(ucD));a("G01 "+Z(thStartZ));a("G01 "+X(shankDia));
+  }else{if(zP>thStartZ)a("G01 "+Z(thStartZ));}
+  const thEndZ=-totalLen;
+  if(thread.taper){const tp=thread.taper*threadLen;a("G01 "+X(shankDia+tp*2)+" "+Z(thEndZ+chamfer));a("G01 "+X(shankDia+tp*2+chamfer*2)+" "+Z(thEndZ));}
+  else if(hasLeadChamfer){a("G01 "+Z(thEndZ+chamfer+0.3));a("G01 "+X(shankDia+0.6)+" "+Z(thEndZ+0.3));a("G01 "+X(shankDia+chamfer*2+0.6)+" "+Z(thEndZ));}
+  else{a("G01 "+Z(thEndZ+chamfer));a("G01 "+X(shankDia+chamfer*2)+" "+Z(thEndZ));}
+  a("N400 G01 "+X(bar+1)+" "+Z(thEndZ));b();
+
+  cm("═══ 工序3: 精車 G70 ═══");
+  cm("  Vc="+mat.finish.Vc+" f="+ff);
+  if(ctrl==="fanuc"||ctrl==="mitsubishi"){
+    a("N500 G00 T0202");a(spd(mat.finish.Vc,finishRPM)+" M03");
+    if(useTNRC){cm("刀尖R補正 ON");a("G42");}a("G70 P300 Q400");if(useTNRC){cm("刀尖R補正 OFF");a("G40");}
+  }else if(ctrl==="okuma"){
+    a("N500 T0202");a(spd(mat.finish.Vc,finishRPM)+" M03");if(useTNRC)a("G42");a("G70 P300 Q400");if(useTNRC)a("G40");
+  }else{
+    a("N500 T2D2");a(spd(mat.finish.Vc,finishRPM)+" M03");a('CYCLE95("CONTOUR1",0.05,0.02,0.02,,'+ff+",,,,0.2)");
+  }
+  a("G00 "+X(bar+2)+" "+Z(safe));b();
+
+  cm("═══ 工序4: 螺紋車削 ═══");
+  cm("  牙型="+thAngle+"° 導程="+thread.pitch+"mm");
+  cm("  大徑Ø"+thread.major+" 小徑Ø"+thread.minor);
+  cm("  切深="+thDepth.toFixed(3)+"mm ("+thDepthUm+"μm)");
+  cm("  進刀: "+(threadInfeed==="compound"?"複合角29.5°":threadInfeed==="alternating"?"交互側面":"徑向直進"));
+  cm("  含2次彈刀精修(spring pass)");
+  const thEndPos=-(totalLen-chamfer);
+  if(ctrl==="fanuc"||ctrl==="mitsubishi"){
+    a("N600 G00 "+thTool);a("G97 S"+threadRPM+" M03");a("G00 "+X(thread.major+2)+" "+Z(safe));
+    const pa=thAngle===60?"060":thAngle===55?"055":"029";
+    cm("G76 P(精修次數)(退刀)(牙型角) Q(最小切深μm) R(精修餘量)");
+    a("G76 P02"+pa+" Q"+minCut+" R0.03");
+    cm("G76 X(小徑) Z(終點) R(錐度) P(牙深μm) Q(首刀μm) F(導程)");
+    if(thread.taper){const tR=thread.taper*threadLen/2;a("G76 "+X(thread.minor)+" "+Z(thEndPos)+" R"+tR.toFixed(3)+" P"+thDepthUm+" Q"+firstCut+" F"+thread.pitch);}
+    else{a("G76 "+X(thread.minor)+" "+Z(thEndPos)+" R0 P"+thDepthUm+" Q"+firstCut+" F"+thread.pitch);}
+  }else if(ctrl==="okuma"){
+    a("N600 "+thTool);a("G97 S"+threadRPM+" M03");a("G00 "+X(thread.major+2)+" "+Z(safe));
+    cm("OKUMA G76: X=小徑 Z=終點 K=牙深 D=首刀μm A=角度 P=精修 F=導程");
+    if(thread.taper){const tR=thread.taper*threadLen/2;a("G76 "+X(thread.minor)+" "+Z(thEndPos)+" K"+thDepth.toFixed(3)+" D"+firstCut+" A"+thAngle+" P2 R"+tR.toFixed(3)+" F"+thread.pitch);}
+    else{a("G76 "+X(thread.minor)+" "+Z(thEndPos)+" K"+thDepth.toFixed(3)+" D"+firstCut+" A"+thAngle+" P2 F"+thread.pitch);}
+  }else{
+    a("N600 T3D3");a("G97 S"+threadRPM+" M03");cm("Siemens CYCLE97");
+    a("CYCLE97("+thread.major.toFixed(3)+",0,"+thEndPos.toFixed(3)+","+thread.minor.toFixed(3)+","+thread.pitch+",,,1,,,,0.03)");
+  }
+  a("G00 "+X(bar+2)+" "+Z(safe));b();
+
+  cm("═══ 工序5: 切斷 ═══");
+  cm("  刀寬="+(partOffWidth||3)+"mm f="+cf);cm("  分段進刀：快→中→退屑→慢(過中心)");
+  const coZ=-(totalLen+(partOffWidth||3)/2+0.2);
+  if(ctrl==="fanuc"||ctrl==="mitsubishi"){
+    a("N700 G00 T0404");a(spd(mat.cutoff.Vc,cutoffRPM)+" M03");
+    a("G00 "+X(bar+2)+" "+Z(coZ));a("G00 "+X(bar+0.5));
+    const mid=bar*0.4;a("G01 "+X(mid)+" F"+cf);cm("退刀排屑");
+    a("G00 "+X(mid+0.5));a("G04 P300");a("G01 "+X(mid)+" F"+cf);
+    cm("慢速過中心");a("G01 X-0.5 F"+(cf*0.7).toFixed(3));
+  }else if(ctrl==="okuma"){
+    a("N700 T0404");a(spd(mat.cutoff.Vc,cutoffRPM)+" M03");
+    a("G00 "+X(bar+2)+" "+Z(coZ));a("G00 "+X(bar+0.5));
+    const mid=bar*0.4;a("G01 "+X(mid)+" F"+cf);a("G00 "+X(mid+0.5));
+    a("G04 P300");a("G01 "+X(mid)+" F"+cf);a("G01 X-1.0 F"+(cf*0.7).toFixed(3));
+  }else{
+    a("N700 T4D4");a(spd(mat.cutoff.Vc,cutoffRPM)+" M03");
+    a("G00 "+X(bar+2)+" "+Z(coZ));a("G00 "+X(bar+0.5));a("G01 X-0.5 F"+cf);
+  }
+  b();
+
+  cm("═══ 程式結束 ═══");
+  if(ctrl==="fanuc"||ctrl==="mitsubishi"){a("N900 G28 U0 W0");a("M09");a("M05");a("T0100");cm("重置刀補");a("M30");a("%");}
+  else if(ctrl==="okuma"){a("N900 G28 W0");a("G28 U0");a("M09");a("M05");a("T0100");a("M02");}
+  else{a("N900 G28 U0 W0");a("M09");a("M05");a("M30");}
+  return L.join("\n");
+}
+
+function getSetupTools(p){
+  let thread;if(p.threadCategory&&THREAD_DB[p.threadCategory])thread=THREAD_DB[p.threadCategory][p.threadSpec];
+  const angle=thread?.angle||60;
+  const tools=[{pos:"T0101",name:"外徑粗車刀 CNMG120408",r:"R0.8",use:"端面+粗車"},{pos:"T0202",name:"外徑精車刀 DNMG150404",r:"R0.4",use:"精車輪廓"},{pos:angle===55?"T0707":angle===29?"T0808":"T0303",name:angle===55?"螺紋刀 16ER 55°(BSP)":angle===29?"螺紋刀 16ER 29°(ACME)":"螺紋刀 16ER 60°",r:"—",use:"車螺紋"},{pos:"T0404",name:"切斷刀 GX24-3E (W3)",r:"—",use:"切斷"}];
+  if(p.addCenterDrill)tools.push({pos:"T0505",name:"中心鑽 A3 Ø3",r:"—",use:"端面定心"});
+  return tools;
+}
+
+// ═══ PART PREVIEW ═══
+function PartPreview({params:p}){
+  let thread;
+  if(p.threadSpec==="自訂")thread=p.customThread;
+  else if(p.threadCategory&&THREAD_DB[p.threadCategory])thread=THREAD_DB[p.threadCategory][p.threadSpec];
+  else thread={major:8,pitch:1.25,minor:6.647};
+  const tl=p.totalLength||30,hd=p.headDiameter||13,hl=p.headLength||5,sd=p.shankDiameter||8,ch=p.chamferSize||0.5,thLen=p.threadLength||20;
+  const sc=Math.min(8,300/tl),px=30,py=20;
+  const w=tl*sc+px*2+50,h=Math.max(hd,sd+4)*sc+py*2+50,cy=h/2;
+  const sx=v=>px+(-v)*sc,sy=(d,top)=>top?cy-(d/2)*sc:cy+(d/2)*sc;
+  const pts=[],bts=[];
+  pts.push([sx(0)+ch*sc,sy(hd-ch*2,true)]);pts.push([sx(0),sy(hd,true)]);pts.push([sx(-hl),sy(hd,true)]);
+  bts.push([sx(0)+ch*sc,sy(hd-ch*2,false)]);bts.push([sx(0),sy(hd,false)]);bts.push([sx(-hl),sy(hd,false)]);
+  if(hd>sd+0.1){const tr=Math.min((hd-sd)/2,2);pts.push([sx(-hl-tr),sy(sd,true)]);bts.push([sx(-hl-tr),sy(sd,false)]);}
+  else{pts.push([sx(-hl),sy(sd,true)]);bts.push([sx(-hl),sy(sd,false)]);}
+  const thSZ=-(tl-thLen);
+  if(p.hasUndercut){const ucW=p.undercutWidth||2,ucD=p.undercutDiameter||(thread?.minor||6.5)-0.3;
+    pts.push([sx(thSZ+ucW),sy(sd,true)],[sx(thSZ+ucW),sy(ucD,true)],[sx(thSZ),sy(ucD,true)],[sx(thSZ),sy(sd,true)]);
+    bts.push([sx(thSZ+ucW),sy(sd,false)],[sx(thSZ+ucW),sy(ucD,false)],[sx(thSZ),sy(ucD,false)],[sx(thSZ),sy(sd,false)]);}
+  pts.push([sx(-tl+ch),sy(sd,true)],[sx(-tl),sy(sd+ch*2,true)]);
+  bts.push([sx(-tl+ch),sy(sd,false)],[sx(-tl),sy(sd+ch*2,false)]);
+  const teeth=[];const pitch=thread?.pitch||1.25,cnt=Math.min(Math.floor(thLen/pitch),35);
+  for(let i=0;i<cnt;i++){const tz=thSZ-i*pitch,tx=sx(tz);
+    teeth.push("M "+tx+","+sy(sd,true)+" L "+(tx-pitch*sc*0.5)+","+sy(sd+0.5,true)+" L "+(tx-pitch*sc)+","+sy(sd,true));
+    teeth.push("M "+tx+","+sy(sd,false)+" L "+(tx-pitch*sc*0.5)+","+sy(sd+0.5,false)+" L "+(tx-pitch*sc)+","+sy(sd,false));}
+  const dimY=sy(hd,false)+22;
+  return React.createElement("svg",{viewBox:"0 0 "+w+" "+h,style:{width:"100%",background:"#080c14",borderRadius:6,border:"1px solid #141e2e"}},
+    React.createElement("line",{x1:px-5,y1:cy,x2:sx(-tl)+30,y2:cy,stroke:"#1e2a3a",strokeWidth:0.5,strokeDasharray:"6 3"}),
+    React.createElement("path",{d:"M "+pts.map(p2=>p2.join(",")).join(" L "),fill:"none",stroke:"#5ba0f7",strokeWidth:1.5}),
+    React.createElement("path",{d:"M "+bts.map(p2=>p2.join(",")).join(" L "),fill:"none",stroke:"#5ba0f7",strokeWidth:1.5}),
+    React.createElement("path",{d:"M "+pts.map(p2=>p2.join(",")).join(" L ")+" L "+sx(-tl)+","+cy+" L "+(sx(0)+ch*sc)+","+cy+" Z",fill:"#5ba0f712"}),
+    React.createElement("path",{d:"M "+bts.map(p2=>p2.join(",")).join(" L ")+" L "+sx(-tl)+","+cy+" L "+(sx(0)+ch*sc)+","+cy+" Z",fill:"#5ba0f712"}),
+    React.createElement("path",{d:teeth.join(" "),fill:"none",stroke:"#f0803c",strokeWidth:0.7,opacity:0.5}),
+    React.createElement("line",{x1:sx(0),y1:dimY,x2:sx(-tl),y2:dimY,stroke:"#5a6a7a",strokeWidth:0.6}),
+    React.createElement("text",{x:(sx(0)+sx(-tl))/2,y:dimY-3,fill:"#b8c8d8",fontSize:9,textAnchor:"middle"},tl+"mm"),
+    React.createElement("text",{x:sx(-hl/2),y:sy(hd,true)-5,fill:"#e8a838",fontSize:8,textAnchor:"middle"},"Ø"+hd),
+    React.createElement("text",{x:sx(-(tl-thLen/2)),y:sy(sd,true)-5,fill:"#56b6c2",fontSize:8,textAnchor:"middle"},"Ø"+sd),
+    React.createElement("text",{x:sx(-(tl-thLen/2)),y:sy(sd,false)+14,fill:"#f0803c",fontSize:8,textAnchor:"middle"},"螺紋 "+thLen+"mm")
+  );
+}
+
+// ═══ G-CODE VIEWER ═══
+function GCodeViewer({code}){
+  if(!code)return null;
+  return React.createElement("div",{style:{background:"#050810",borderRadius:6,padding:"10px 0",fontFamily:"'JetBrains Mono',monospace",fontSize:11.5,lineHeight:1.6,overflowX:"auto",maxHeight:400,overflowY:"auto",border:"1px solid #101820"}},
+    code.split("\n").map((line,i)=>{
+      let col="#556677";const t=line.trim();
+      if(t.startsWith("(")||t.startsWith(";")||t.startsWith("%"))col="#2e4a2e";
+      else if(/^G\d|^CYCLE|^LIMS/.test(t))col="#5ba0f7";
+      else if(/^N\d/.test(t))col="#e8a838";
+      else if(/^[MT]/.test(t))col="#c678dd";
+      else if(/^[XZUKW]/.test(t))col="#56b6c2";
+      else if(/^[FSRPDQ]/.test(t))col="#e06c75";
+      return React.createElement("div",{key:i,style:{display:"flex",padding:"0 10px"}},
+        React.createElement("span",{style:{color:"#161e28",width:32,textAlign:"right",marginRight:10,flexShrink:0,userSelect:"none",fontSize:9.5}},i+1),
+        React.createElement("span",{style:{color:col,whiteSpace:"pre"}},line));
+    }));
+}
+
+function StepBar({current,steps}){
+  return React.createElement("div",{style:{display:"flex",gap:2,marginBottom:24}},
+    steps.map((s,i)=>React.createElement("div",{key:i,style:{flex:1,textAlign:"center"}},
+      React.createElement("div",{style:{height:3,borderRadius:2,background:i<=current?"#f0803c":"#101820"}}),
+      React.createElement("div",{style:{marginTop:5,fontSize:9,letterSpacing:0.6,color:i<=current?"#f0803c":"#2a3545",fontWeight:i===current?700:400}},s))));
+}
+
+function Field({label,children,span}){
+  return React.createElement("div",{style:{gridColumn:span?"span "+span:undefined}},
+    React.createElement("label",{style:{display:"block",fontSize:9.5,letterSpacing:0.6,color:"#4a5a6a",marginBottom:4,fontWeight:600}},label),children);
+}
+
+const IS={width:"100%",padding:"8px 9px",background:"#080c14",border:"1px solid #151e28",borderRadius:4,color:"#c8d4e0",fontSize:12.5,fontFamily:"'JetBrains Mono',monospace",outline:"none",boxSizing:"border-box"};
+const SS={...IS,appearance:"none",cursor:"pointer"};
+const B1={padding:"10px 24px",background:"linear-gradient(135deg,#f0803c,#c04a18)",color:"#fff",border:"none",borderRadius:4,fontSize:12.5,fontWeight:700,cursor:"pointer"};
+const B2={padding:"10px 24px",background:"transparent",color:"#4a5a6a",border:"1px solid #151e28",borderRadius:4,fontSize:12.5,cursor:"pointer"};
+const CD={padding:12,background:"#080c14",border:"1px solid #101820",borderRadius:5,marginBottom:12};
+const CT={fontSize:10.5,fontWeight:700,color:"#f0803c",marginBottom:8,letterSpacing:0.6};
+
+// ═══ MAIN APP ═══
+function App(){
+  const[step,setStep]=useState(0);
+  const[img,setImg]=useState(null);
+  const[b64,setB64]=useState(null);
+  const[busy,setBusy]=useState(false);
+  const[aiRes,setAiRes]=useState(null);
+  const[aiErr,setAiErr]=useState(null);
+  const[tab,setTab]=useState("gcode");
+  const fRef=useRef(null);
+  const[copied,setCopied]=useState(false);
+
+  const[p,setP]=useState({controller:"FANUC 0i-TF",material:"S45C 中碳鋼",threadCategory:"ISO 公制粗牙",threadSpec:"M8×1.25",customThread:{major:0,pitch:0,minor:0,angle:60},barDiameter:10,totalLength:30,headDiameter:13,headLength:5,headType:"hex",chamferSize:0.5,threadLength:20,shankDiameter:8,hasUndercut:false,undercutWidth:2,undercutDiameter:6.2,tolerance:0.02,safeZ:5,partOffWidth:3,threadInfeed:"compound",useG96:true,maxRPM:3500,coolantType:"water",useTNRC:true,addCenterDrill:false,centerDrillDepth:3,hasLeadChamfer:true});
+  const[gcode,setGcode]=useState("");
+
+  const u=(k,v)=>setP(prev=>({...prev,[k]:v}));
+  const uN=k=>e=>u(k,parseFloat(e.target.value)||0);
+  const thSpecs=useMemo(()=>p.threadCategory&&THREAD_DB[p.threadCategory]?Object.keys(THREAD_DB[p.threadCategory]):[],[p.threadCategory]);
+  const val=useMemo(()=>validateParams(p),[p]);
+  const ct=useMemo(()=>{let pitch=1.25;if(p.threadSpec!=="自訂"&&p.threadCategory&&THREAD_DB[p.threadCategory]?.[p.threadSpec])pitch=THREAD_DB[p.threadCategory][p.threadSpec].pitch;else if(p.customThread.pitch)pitch=p.customThread.pitch;return calcCycleTime({...p,threadPitch:pitch});},[p]);
+  const tools=useMemo(()=>getSetupTools(p),[p]);
+
+  const onUpload=useCallback(e=>{const f=e.target.files[0];if(!f)return;setImg(URL.createObjectURL(f));setAiRes(null);setAiErr(null);const r=new FileReader();r.onload=()=>setB64(r.result.split(",")[1]);r.readAsDataURL(f);},[]);
+
+  const analyze=useCallback(async()=>{
+    if(!b64)return;setBusy(true);setAiErr(null);
+    try{
+      const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:1000,messages:[{role:"user",content:[{type:"image",source:{type:"base64",media_type:"image/png",data:b64}},{type:"text",text:'你是資深CNC車床工程師。分析此工程圖提取參數。只回JSON：{"threadSpec":"M8×1.25或null","threadCategory":"ISO 公制粗牙等或null","totalLength":數字,"headDiameter":數字,"headLength":數字,"headType":"hex等","shankDiameter":數字,"threadLength":數字,"chamferSize":數字,"hasUndercut":bool,"notes":"備註"}'}]}]})});
+      const data=await res.json();const txt=data.content?.map(c=>c.text||"").join("")||"";
+      const parsed=JSON.parse(txt.replace(/```json|```/g,"").trim());setAiRes(parsed);
+      setP(prev=>({...prev,...(parsed.threadCategory&&THREAD_DB[parsed.threadCategory]?{threadCategory:parsed.threadCategory}:{}),...(parsed.threadSpec?{threadSpec:parsed.threadSpec}:{}),...(parsed.totalLength?{totalLength:parsed.totalLength}:{}),...(parsed.headDiameter?{headDiameter:parsed.headDiameter}:{}),...(parsed.headLength?{headLength:parsed.headLength}:{}),...(parsed.headType?{headType:parsed.headType}:{}),...(parsed.shankDiameter?{shankDiameter:parsed.shankDiameter,barDiameter:Math.ceil(parsed.shankDiameter)+2}:{}),...(parsed.threadLength?{threadLength:parsed.threadLength}:{}),...(parsed.chamferSize?{chamferSize:parsed.chamferSize}:{}),...(parsed.hasUndercut!==undefined?{hasUndercut:parsed.hasUndercut}:{})}));
+    }catch(err){setAiErr("AI分析失敗: "+err.message);}setBusy(false);
+  },[b64]);
+
+  const generate=()=>{if(val.errors.length)return;setGcode(generateGCode(p));setStep(3);setTab("gcode");};
+  const dl=(content,name)=>{const b=new Blob([content],{type:"text/plain;charset=utf-8"});const u2=URL.createObjectURL(b);const a=document.createElement("a");a.href=u2;a.download=name;a.click();URL.revokeObjectURL(u2);};
+  const copyCode=()=>{navigator.clipboard.writeText(gcode);setCopied(true);setTimeout(()=>setCopied(false),2000);};
+
+  const E=React.createElement;
+  const STEPS=["上傳圖紙","設備設定","加工參數","程式輸出"];
+
+  const inp=(k,step2,val2)=>E("input",{type:"number",step:step2||"0.1",value:val2!==undefined?val2:p[k],onChange:uN(k),style:IS});
+  const sel=(k,opts)=>E("select",{value:p[k],onChange:e=>u(k,e.target.value),style:SS},opts.map(o=>typeof o==="string"?E("option",{key:o,value:o},o):E("option",{key:o[0],value:o[0]},o[1]||o[0])));
+
+  return E("div",{style:{minHeight:"100vh"}},
+    // Header
+    E("div",{style:{borderBottom:"1px solid #0c1218",padding:"10px 14px",display:"flex",alignItems:"center",justifyContent:"space-between",background:"#080c14"}},
+      E("div",{style:{display:"flex",alignItems:"center",gap:8}},
+        E("div",{style:{width:28,height:28,borderRadius:5,background:"linear-gradient(135deg,#f0803c,#c04a18)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,color:"#fff",fontWeight:900}},"⚙"),
+        E("div",null,
+          E("div",{style:{fontSize:13,fontWeight:700,color:"#e0e8f0",letterSpacing:0.3}},"CNC G-Code Generator Pro"),
+          E("div",{style:{fontSize:8,color:"#2a3a48",letterSpacing:1}},"FANUC · OKUMA · MITSUBISHI · SIEMENS | 7牙系 · 16材質"))),
+      E("div",{style:{fontSize:9,color:"#1e2830"}},"v3.0")),
+
+    E("div",{style:{maxWidth:780,margin:"0 auto",padding:"16px 14px"}},
+      E(StepBar,{current:step,steps:STEPS}),
+
+      // STEP 0
+      step===0&&E("div",null,
+        E("h2",{style:{fontSize:16,fontWeight:700,color:"#e0e8f0",marginBottom:4}},"上傳工程圖"),
+        E("p",{style:{color:"#3a4a5a",fontSize:11,marginBottom:16}},"AI辨識尺寸自動填入，或跳過手動輸入。"),
+        E("div",{onClick:()=>fRef.current?.click(),style:{border:"2px dashed #101820",borderRadius:8,padding:img?0:40,textAlign:"center",cursor:"pointer",overflow:"hidden",background:"#060a12"}},
+          img?E("img",{src:img,style:{maxWidth:"100%",maxHeight:300,display:"block",margin:"0 auto"}}):E("div",null,E("div",{style:{fontSize:36,marginBottom:6}},"📐"),E("div",{style:{color:"#4a5a6a",fontSize:12}},"點擊上傳"))),
+        E("input",{ref:fRef,type:"file",accept:"image/*,.pdf",onChange:onUpload,style:{display:"none"}}),
+        img&&!aiRes&&E("button",{onClick:analyze,disabled:busy,style:{...B1,marginTop:12,width:"100%",opacity:busy?0.5:1}},busy?"⏳ AI 分析中...":"🔍 AI 辨識圖紙"),
+        aiErr&&E("div",{style:{marginTop:8,padding:8,background:"#140808",border:"1px solid #301818",borderRadius:4,color:"#d04040",fontSize:11}},aiErr),
+        aiRes&&E("div",{style:{marginTop:12,padding:12,background:"#061008",border:"1px solid #183018",borderRadius:5}},
+          E("div",{style:{fontSize:11,fontWeight:700,color:"#40a060",marginBottom:8}},"✅ AI辨識完成"),
+          E("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:4,fontSize:11}},
+            aiRes.threadSpec&&E("div",null,E("span",{style:{color:"#406050"}},"螺紋: "),aiRes.threadSpec),
+            aiRes.totalLength&&E("div",null,E("span",{style:{color:"#406050"}},"總長: "),aiRes.totalLength),
+            aiRes.headDiameter&&E("div",null,E("span",{style:{color:"#406050"}},"頭徑: "),aiRes.headDiameter),
+            aiRes.shankDiameter&&E("div",null,E("span",{style:{color:"#406050"}},"桿徑: "),aiRes.shankDiameter),
+            aiRes.threadLength&&E("div",null,E("span",{style:{color:"#406050"}},"牙長: "),aiRes.threadLength)),
+          aiRes.notes&&E("div",{style:{marginTop:4,fontSize:10,color:"#406050"}},"備註: ",aiRes.notes)),
+        E("div",{style:{display:"flex",gap:8,marginTop:16,justifyContent:"flex-end"}},
+          E("button",{onClick:()=>setStep(1),style:B2},"跳過 →"),
+          (aiRes||img)&&E("button",{onClick:()=>setStep(1),style:B1},"下一步 →"))),
+
+      // STEP 1
+      step===1&&E("div",null,
+        E("h2",{style:{fontSize:16,fontWeight:700,color:"#e0e8f0",marginBottom:4}},"設備與切削設定"),
+        E("div",{style:CD},E("div",{style:CT},"🖥 機台"),
+          E("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10},className:"grid3"},
+            E(Field,{label:"控制器"},sel("controller",Object.keys(CONTROLLERS))),
+            E(Field,{label:"主軸最高 RPM"},inp("maxRPM",100)),
+            E(Field,{label:"棒材直徑 mm"},inp("barDiameter",0.1)),
+            E(Field,{label:"冷卻"},sel("coolantType",[["water","水溶性(M08)"],["oil","切削油(M08)"],["mist","油霧(M07)"]])))),
+        E("div",{style:CD},E("div",{style:CT},"🔧 材質與策略"),
+          E("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10},className:"grid3"},
+            E(Field,{label:"材質",span:2},sel("material",Object.keys(MATERIALS))),
+            E(Field,{label:"速度控制"},E("select",{value:p.useG96?"y":"n",onChange:e=>u("useG96",e.target.value==="y"),style:SS},E("option",{value:"y"},"G96 恆表面速度(建議)"),E("option",{value:"n"},"G97 固定轉速"))),
+            E(Field,{label:"刀尖R補正"},E("select",{value:p.useTNRC?"y":"n",onChange:e=>u("useTNRC",e.target.value==="y"),style:SS},E("option",{value:"y"},"G41/G42 啟用(建議)"),E("option",{value:"n"},"不使用"))),
+            E(Field,{label:"公差 ±mm"},inp("tolerance",0.001)),
+            E(Field,{label:"安全Z mm"},inp("safeZ",0.5))),
+          MATERIALS[p.material]&&E("div",{style:{marginTop:8,padding:8,background:"#050810",borderRadius:3,fontSize:10,color:"#3a4a5a",display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:3}},
+            E("div",null,"粗Vc="+MATERIALS[p.material].rough.Vc),E("div",null,"f="+MATERIALS[p.material].rough.f),
+            E("div",null,"精Vc="+MATERIALS[p.material].finish.Vc),E("div",null,"f="+MATERIALS[p.material].finish.f),
+            E("div",null,"螺紋Vc="+MATERIALS[p.material].thread.Vc),E("div",null,"切斷Vc="+MATERIALS[p.material].cutoff.Vc),
+            E("div",null,MATERIALS[p.material].hardness))),
+        E("div",{style:{display:"flex",gap:8,marginTop:20,justifyContent:"space-between"}},
+          E("button",{onClick:()=>setStep(0),style:B2},"← 上一步"),
+          E("button",{onClick:()=>setStep(2),style:B1},"下一步 →"))),
+
+      // STEP 2
+      step===2&&E("div",null,
+        E("h2",{style:{fontSize:16,fontWeight:700,color:"#e0e8f0",marginBottom:4}},"加工參數"),
+        E(PartPreview,{params:p}),
+        E("div",{style:{...CD,marginTop:12}},E("div",{style:CT},"🔩 螺紋"),
+          E("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10},className:"grid3"},
+            E(Field,{label:"牙系"},E("select",{value:p.threadCategory,onChange:e=>{u("threadCategory",e.target.value);const sp=Object.keys(THREAD_DB[e.target.value]||{});if(sp.length)u("threadSpec",sp[0]);},style:SS},Object.keys(THREAD_DB).map(c2=>E("option",{key:c2},c2)),E("option",{value:"自訂"},"自訂"))),
+            E(Field,{label:"規格"},p.threadCategory!=="自訂"?E("select",{value:p.threadSpec,onChange:e=>u("threadSpec",e.target.value),style:SS},thSpecs.map(s2=>E("option",{key:s2},s2))):E("input",{value:p.threadSpec,onChange:e=>u("threadSpec",e.target.value),style:IS})),
+            E(Field,{label:"螺紋長 mm"},inp("threadLength",0.1)),
+            E(Field,{label:"進刀方式"},sel("threadInfeed",[["compound","複合角29.5°(推薦)"],["radial","徑向直進"],["alternating","交互側面"]])),
+            E(Field,{label:"牙端導角"},E("select",{value:p.hasLeadChamfer?"y":"n",onChange:e=>u("hasLeadChamfer",e.target.value==="y"),style:SS},E("option",{value:"y"},"有"),E("option",{value:"n"},"無")))),
+          p.threadCategory==="自訂"&&E("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:10,marginTop:8},className:"grid4"},
+            E(Field,{label:"大徑"},E("input",{type:"number",step:"0.001",value:p.customThread.major,onChange:e=>setP(prev=>({...prev,customThread:{...prev.customThread,major:parseFloat(e.target.value)||0}})),style:IS})),
+            E(Field,{label:"螺距"},E("input",{type:"number",step:"0.01",value:p.customThread.pitch,onChange:e=>setP(prev=>({...prev,customThread:{...prev.customThread,pitch:parseFloat(e.target.value)||0}})),style:IS})),
+            E(Field,{label:"小徑"},E("input",{type:"number",step:"0.001",value:p.customThread.minor,onChange:e=>setP(prev=>({...prev,customThread:{...prev.customThread,minor:parseFloat(e.target.value)||0}})),style:IS})),
+            E(Field,{label:"牙型角°"},E("input",{type:"number",value:p.customThread.angle,onChange:e=>setP(prev=>({...prev,customThread:{...prev.customThread,angle:parseFloat(e.target.value)||60}})),style:IS})))),
+        E("div",{style:CD},E("div",{style:CT},"📐 幾何"),
+          E("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10},className:"grid3"},
+            E(Field,{label:"總長 mm"},inp("totalLength",0.1)),
+            E(Field,{label:"頭徑 mm"},inp("headDiameter",0.1)),
+            E(Field,{label:"頭長 mm"},inp("headLength",0.1)),
+            E(Field,{label:"桿徑 mm"},inp("shankDiameter",0.01)),
+            E(Field,{label:"倒角C mm"},inp("chamferSize",0.1)),
+            E(Field,{label:"頭型"},sel("headType",[["hex","六角"],["pan","盤頭"],["flat","平頭"],["socket","內六角"],["round","圓頭"],["other","其他"]])))),
+        E("div",{style:CD},E("div",{style:CT},"⚡ 附加"),
+          E("div",{style:{display:"flex",gap:16}},
+            E("label",{style:{display:"flex",alignItems:"center",gap:6,fontSize:12,cursor:"pointer"}},E("input",{type:"checkbox",checked:p.hasUndercut,onChange:e=>u("hasUndercut",e.target.checked)}),"退刀槽"),
+            E("label",{style:{display:"flex",alignItems:"center",gap:6,fontSize:12,cursor:"pointer"}},E("input",{type:"checkbox",checked:p.addCenterDrill,onChange:e=>u("addCenterDrill",e.target.checked)}),"中心鑽")),
+          p.hasUndercut&&E("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginTop:8}},
+            E(Field,{label:"槽寬mm"},inp("undercutWidth",0.1)),E(Field,{label:"槽底徑mm"},inp("undercutDiameter",0.1))),
+          p.addCenterDrill&&E("div",{style:{marginTop:8}},E(Field,{label:"鑽深mm"},E("input",{type:"number",step:"0.5",value:p.centerDrillDepth,onChange:uN("centerDrillDepth"),style:{...IS,maxWidth:180}})))),
+        (val.errors.length>0||val.warnings.length>0)&&E("div",{style:{marginBottom:10}},
+          val.errors.map((e2,i)=>E("div",{key:i,style:{padding:6,background:"#140808",border:"1px solid #301818",borderRadius:3,color:"#d04040",fontSize:11,marginBottom:3}},"❌ "+e2)),
+          val.warnings.map((w2,i)=>E("div",{key:i,style:{padding:6,background:"#141408",border:"1px solid #303018",borderRadius:3,color:"#a09030",fontSize:11,marginBottom:3}},"⚠️ "+w2))),
+        E("div",{style:{padding:8,background:"#060a12",border:"1px solid #101820",borderRadius:4,fontSize:10,color:"#3a4a5a",display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}},
+          E("span",{style:{color:"#f0803c",fontWeight:700}},"預估:"),
+          E("span",null,"端面"+ct.face+"s"),E("span",null,"粗車"+ct.rough+"s"),E("span",null,"精車"+ct.finish+"s"),
+          E("span",null,"螺紋"+ct.thread+"s"),E("span",null,"切斷"+ct.cutoff+"s"),
+          E("span",{style:{color:"#e0e8f0",fontWeight:700}},"合計≈"+ct.total+"s ("+(ct.total/60).toFixed(1)+"min)")),
+        E("div",{style:{display:"flex",gap:8,marginTop:20,justifyContent:"space-between"}},
+          E("button",{onClick:()=>setStep(1),style:B2},"← 上一步"),
+          E("button",{onClick:generate,disabled:val.errors.length>0,style:{...B1,opacity:val.errors.length?0.3:1}},"⚡ 產生 G-Code"))),
+
+      // STEP 3
+      step===3&&E("div",null,
+        E("h2",{style:{fontSize:16,fontWeight:700,color:"#e0e8f0",marginBottom:4}},"程式輸出"),
+        E("div",{style:{display:"flex",gap:4,marginBottom:10,flexWrap:"wrap"}},
+          [p.controller,p.threadSpec,p.material,"L="+p.totalLength,"Ø"+p.shankDiameter].map((t2,i)=>E("span",{key:i,style:{padding:"2px 6px",background:"#0a0e16",borderRadius:3,fontSize:9.5,color:["#5ba0f7","#f0803c","#56b6c2","#c678dd","#e8a838"][i]}},t2))),
+        E("div",{style:{display:"flex",gap:0,marginBottom:10,borderBottom:"1px solid #101820"}},
+          [["gcode","G-Code"],["preview","零件圖"],["setup","刀具表"],["time","工時"]].map(([id,lb])=>E("button",{key:id,onClick:()=>setTab(id),style:{padding:"6px 14px",background:"transparent",border:"none",borderBottom:tab===id?"2px solid #f0803c":"2px solid transparent",color:tab===id?"#f0803c":"#3a4a5a",fontSize:11,cursor:"pointer",fontWeight:tab===id?700:400}},lb))),
+
+        tab==="gcode"&&E("div",null,
+          E(GCodeViewer,{code:gcode}),
+          E("div",{style:{marginTop:10,padding:8,background:"#100e08",border:"1px solid #282418",borderRadius:4,fontSize:10.5,color:"#a09030"}},
+            "⚠️ ",E("strong",null,"上機前："),"確認座標系、刀補值、安全高度。先空跑(DryRun/單節)確認。程式為參考基礎，需依實際調整。")),
+
+        tab==="preview"&&E(PartPreview,{params:p}),
+
+        tab==="setup"&&E("div",{style:{background:"#060a12",borderRadius:4,border:"1px solid #101820",overflow:"hidden"}},
+          E("table",{style:{width:"100%",borderCollapse:"collapse",fontSize:11}},
+            E("thead",null,E("tr",{style:{background:"#0a0e16"}},["刀位","刀具","R","用途"].map(h=>E("th",{key:h,style:{padding:"6px 8px",textAlign:"left",color:"#4a5a6a",fontWeight:600,fontSize:9.5}},h)))),
+            E("tbody",null,tools.map((t2,i)=>E("tr",{key:i,style:{borderTop:"1px solid #0a0e16"}},
+              E("td",{style:{padding:"6px 8px",color:"#f0803c",fontFamily:"monospace"}},t2.pos),
+              E("td",{style:{padding:"6px 8px",color:"#b8c8d8"}},t2.name),
+              E("td",{style:{padding:"6px 8px",color:"#4a5a6a"}},t2.r),
+              E("td",{style:{padding:"6px 8px",color:"#4a5a6a"}},t2.use)))))),
+
+        tab==="time"&&E("div",{style:{background:"#060a12",borderRadius:4,border:"1px solid #101820",padding:14}},
+          E("div",{style:{fontSize:12,fontWeight:700,color:"#e0e8f0",marginBottom:10}},"加工時間分析"),
+          [{l:"端面",t:ct.face,c:"#5ba0f7"},{l:"粗車",t:ct.rough,c:"#e8a838"},{l:"精車",t:ct.finish,c:"#56b6c2"},{l:"螺紋",t:ct.thread,c:"#f0803c"},{l:"切斷",t:ct.cutoff,c:"#c678dd"},{l:"快移",t:ct.rapid,c:"#3a4a5a"}].map((it,i)=>
+            E("div",{key:i,style:{display:"flex",alignItems:"center",gap:8,marginBottom:6}},
+              E("div",{style:{width:50,fontSize:10,color:"#5a6a7a"}},it.l),
+              E("div",{style:{flex:1,height:14,background:"#0a0e16",borderRadius:2,overflow:"hidden"}},
+                E("div",{style:{height:"100%",width:(it.t/ct.total*100)+"%",background:it.c,borderRadius:2,minWidth:3}})),
+              E("div",{style:{width:40,fontSize:10,color:"#5a6a7a",textAlign:"right"}},it.t+"s"))),
+          E("div",{style:{marginTop:10,padding:8,background:"#0a0e16",borderRadius:3,display:"flex",justifyContent:"space-between",fontSize:12}},
+            E("span",{style:{color:"#5a6a7a"}},"單件"),
+            E("span",{style:{color:"#e0e8f0",fontWeight:700}},ct.total+"s ("+(ct.total/60).toFixed(1)+"min)")),
+          E("div",{style:{display:"flex",justifyContent:"space-between",fontSize:10,color:"#3a4a5a",marginTop:4}},
+            E("span",null,"100件 ≈ "+(ct.total*100/3600).toFixed(1)+"hr"),
+            E("span",null,"1000件 ≈ "+(ct.total*1000/3600).toFixed(1)+"hr"))),
+
+        E("div",{style:{display:"flex",gap:8,marginTop:16,justifyContent:"space-between",flexWrap:"wrap"}},
+          E("button",{onClick:()=>setStep(2),style:B2},"← 修改"),
+          E("div",{style:{display:"flex",gap:6}},
+            E("button",{onClick:copyCode,style:B2},copied?"✅ 已複製":"📋 複製"),
+            E("button",{onClick:()=>dl(gcode,"screw_"+p.threadSpec.replace(/[×\/]/g,"x")+"_"+p.controller.split(" ")[0]+".nc"),style:B1},"💾 下載.nc"))))));
+}
+
+ReactDOM.render(React.createElement(App),document.getElementById("root"));
+</script>
+</body>
+</html>

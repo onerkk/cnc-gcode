@@ -1,2 +1,21 @@
-# cnc-gcode
-CNC G-Code Generator Pro
+# CNC G-Code Generator Pro v3.0
+
+車床螺絲/軸件 G-Code 自動產生器
+
+## 功能
+
+- **4 大控制器**：FANUC / OKUMA OSP / Mitsubishi / Siemens
+- **7 大牙系 80+ 規格**：ISO 公制粗細牙、UNC/UNF 美制、BSP 英制管牙、NPT 錐管牙、ACME 梯形牙
+- **16 種材質**：碳鋼、合金鋼、不鏽鋼、鋁合金、黃銅、鈦合金、鎳基合金、工程塑膠
+- **AI 圖紙辨識**：上傳工程圖自動提取尺寸
+- **即時零件預覽**：SVG 截面圖
+- **工時分析**：單件/批量加工時間估算
+- **刀具表**：自動依牙型角選配刀具
+
+## 部署
+
+靜態單頁，直接放 GitHub Pages 即可。
+
+## 授權
+
+商業產品，版權所有。
