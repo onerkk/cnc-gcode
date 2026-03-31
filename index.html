@@ -89,15 +89,18 @@ function gcHeader(ctrl,controller,p,mat,partTypeName,extraInfo){
   else L.push("%_N_PART_MPF");
   cm("════════════════════════════════════════════════");
   cm("  CNC 車床加工程式 — "+partTypeName);
-  cm("  CNC G-Code Generator v4.0 Pro");
+  cm("  CNC G-Code Generator v5.0 Pro");
   cm("════════════════════════════════════════════════");
   cm("  控制器: "+controller);
   cm("  材  質: "+p.material+" ("+mat.hardness+")");
+  if(p.useCustomCut)cm("  ⚠ 使用自訂切削參數");
   if(extraInfo)extraInfo.forEach(s=>cm("  "+s));
   cm("────────────────────────────────────────────────");
-  cm("  粗車 Vc="+mat.rough.Vc+" f="+mat.rough.f+" ap="+mat.rough.ap);
-  cm("  精車 Vc="+mat.finish.Vc+" f="+mat.finish.f+" ap="+mat.finish.ap);
-  if(mat.bore)cm("  搪孔 Vc="+mat.bore.Vc+" f="+mat.bore.f+" ap="+mat.bore.ap);
+  cm("  粗車 Vc="+mat.rough.Vc+" f="+mat.rough.f+" ap="+mat.rough.ap+(p.useCustomCut?" [自訂]":""));
+  cm("  精車 Vc="+mat.finish.Vc+" f="+mat.finish.f+" ap="+mat.finish.ap+(p.useCustomCut?" [自訂]":""));
+  cm("  螺紋 Vc="+mat.thread.Vc+(p.useCustomCut?" [自訂]":""));
+  cm("  切斷 Vc="+mat.cutoff.Vc+" f="+mat.cutoff.f+(p.useCustomCut?" [自訂]":""));
+  if(mat.bore)cm("  搪孔 Vc="+mat.bore.Vc+" f="+mat.bore.f+" ap="+mat.bore.ap+(p.useCustomCut?" [自訂]":""));
   cm("════════════════════════════════════════════════");
   L.push("");
   return L;
@@ -149,7 +152,7 @@ function gcCenterDrill(ctrl,mat,safe,coolM,depth){
   return L;
 }
 
-function gcDrilling(ctrl,mat,safe,coolM,drillDia,depth,through){
+function gcDrilling(ctrl,mat,safe,coolM,drillDia,depth,through,peckMult){
   const L=[];const cm=t=>{if(ctrl==="siemens")L.push("; "+t);else L.push("("+t+")");};
   const drillRPM=calcRPM(mat.drill.Vc,drillDia);
   cm("═══ 鑽孔 Ø"+drillDia.toFixed(1)+" 深"+depth.toFixed(1)+" ═══");
@@ -159,7 +162,8 @@ function gcDrilling(ctrl,mat,safe,coolM,drillDia,depth,through){
   L.push("G97 S"+drillRPM+" M03");L.push(coolM);
   L.push("G00 X0 Z"+safe.toFixed(1));L.push("G00 Z2.0");
   // Peck drilling G83
-  const peck=Math.min(drillDia*2,depth/3);
+  const pm=peckMult||2.0;
+  const peck=Math.min(drillDia*pm,depth/3);
   if(ctrl==="siemens"){
     L.push("CYCLE83(2,0,"+(-depth).toFixed(1)+",,,"+mat.drill.f+","+peck.toFixed(1)+",,,)");
   }else{
@@ -182,10 +186,10 @@ function gcBoring(ctrl,mat,safe,coolM,boreDia,boreDepth,useG96){
   L.push("G00 X"+(boreDia-2).toFixed(3)+" Z"+safe.toFixed(1));
   L.push("G00 Z2.0");
   // Rough bore
-  const passes=Math.ceil(1.0/mat.bore.ap);
+  const bStock=p.adv?.boreStock||1.0;const passes=Math.ceil(bStock/mat.bore.ap);
   for(let i=0;i<passes;i++){
-    const d=boreDia-1.0+mat.bore.ap*(i+1);
-    if(d>boreDia-0.1)break;
+    const d=boreDia-bStock+mat.bore.ap*(i+1);
+    if(d>boreDia-0.05)break;
     L.push("G01 X"+d.toFixed(3)+" F"+mat.bore.f);
     L.push("G01 Z"+(-boreDepth).toFixed(3));
     L.push("G00 X"+(d-0.5).toFixed(3));
@@ -193,7 +197,7 @@ function gcBoring(ctrl,mat,safe,coolM,boreDia,boreDepth,useG96){
   }
   // Finish bore
   cm("精搪");
-  L.push("G01 X"+boreDia.toFixed(3)+" F"+(mat.bore.f*0.6).toFixed(3));
+  L.push("G01 X"+boreDia.toFixed(3)+" F"+(mat.bore.f*(p.adv?.boreFinishF||0.6)).toFixed(3));
   L.push("G01 Z"+(-boreDepth).toFixed(3));
   L.push("G00 X"+(boreDia-0.5).toFixed(3));
   L.push("G00 Z"+safe.toFixed(1));L.push("");
@@ -299,13 +303,13 @@ function gcCutoff(ctrl,mat,bar,totalLen,partOffWidth,safe,coolM,useG96){
   L.push(spd+" M03");L.push(coolM);
   L.push("G00 X"+(bar+2).toFixed(3)+" Z"+coZ.toFixed(3));
   L.push("G00 X"+(bar+0.5).toFixed(3));
-  const mid=bar*0.4;
+  const mid=bar*(p.adv?.cutoffMidPct||40)/100;
   L.push("G01 X"+mid.toFixed(3)+" F"+cf);
   cm("退刀排屑");
   L.push("G00 X"+(mid+0.5).toFixed(3));L.push("G04 P300");
   L.push("G01 X"+mid.toFixed(3)+" F"+cf);
   cm("慢速過中心");
-  L.push("G01 X-0.5 F"+(cf*0.7).toFixed(3));L.push("");
+  L.push("G01 X-0.5 F"+(cf*(p.adv?.cutoffSlowF||0.7)).toFixed(3));L.push("");
   return L;
 }
 
@@ -319,9 +323,25 @@ function gcEnd(ctrl){
 }
 
 // ═══ PER-PART-TYPE G-CODE GENERATORS ═══
+function getEffectiveMat(p){
+  const base=MATERIALS[p.material]||MATERIALS["S45C 中碳鋼"];
+  if(!p.useCustomCut)return base;
+  const c=p.customCut||{};
+  // Deep clone and override non-zero values
+  return{
+    hardness:base.hardness,
+    rough:{Vc:c.roughVc||base.rough.Vc,f:c.roughF||base.rough.f,ap:c.roughAp||base.rough.ap},
+    finish:{Vc:c.finishVc||base.finish.Vc,f:c.finishF||base.finish.f,ap:c.finishAp||base.finish.ap},
+    thread:{Vc:c.threadVc||base.thread.Vc},
+    cutoff:{Vc:c.cutoffVc||base.cutoff.Vc,f:c.cutoffF||base.cutoff.f},
+    drill:{Vc:c.drillVc||base.drill.Vc,f:c.drillF||base.drill.f},
+    bore:{Vc:c.boreVc||base.bore.Vc,f:c.boreF||base.bore.f,ap:c.boreAp||base.bore.ap}
+  };
+}
+
 function generateGCode(p){
   const ctrl=CONTROLLERS[p.controller]||"fanuc";
-  const mat=MATERIALS[p.material]||MATERIALS["S45C 中碳鋼"];
+  const mat=getEffectiveMat(p);
   const coolM=p.coolantType==="mist"?"M07":"M08";
   const safe=p.safeZ||5;
   const bar=p.barDiameter||12;
@@ -362,9 +382,9 @@ GENERATORS.screw=function(p,ctrl,mat,coolM,safe,bar,tl,pw,thread){
   // G71 rough
   cm("═══ 粗車外徑 G71 ═══");
   if(ctrl==="siemens"){a("G00 X"+(bar+2).toFixed(3)+" Z"+safe.toFixed(1));a(spdR+" M03");a('CYCLE95("CONTOUR1",'+rd+",0.3,0.1,,"+rf+",,,,0.5)");}
-  else{a("G00 X"+(bar+2).toFixed(3)+" Z"+safe.toFixed(1));a(spdR+" M03");a("G71 U"+rd+" R0.5");
-    if(ctrl==="okuma")a("G71 P300 Q400 U0.3 W0.1 F"+rf+" S"+(p.useG96?mat.rough.Vc:roughRPM));
-    else a("G71 P300 Q400 U0.3 W0.1 F"+rf);}b();
+  else{a("G00 X"+(bar+2).toFixed(3)+" Z"+safe.toFixed(1));a(spdR+" M03");a("G71 U"+rd+" R"+(p.adv?.g71Retract||0.5));
+    if(ctrl==="okuma")a("G71 P300 Q400 U"+(p.adv?.g71FinishU||0.3)+" W"+(p.adv?.g71FinishW||0.1)+" F"+rf+" S"+(p.useG96?mat.rough.Vc:roughRPM));
+    else a("G71 P300 Q400 U"+(p.adv?.g71FinishU||0.3)+" W"+(p.adv?.g71FinishW||0.1)+" F"+rf);}b();
 
   // Contour
   cm("═══ 精車輪廓 N300-N400 ═══");
@@ -418,9 +438,9 @@ GENERATORS.shaft=function(p,ctrl,mat,coolM,safe,bar,tl,pw,thread){
 
   // G71 rough
   cm("═══ 粗車外徑 G71 ═══");
-  if(ctrl!=="siemens"){a("G00 X"+(bar+2).toFixed(3)+" Z"+safe.toFixed(1));a(spdR+" M03");a("G71 U"+rd+" R0.5");
-    if(ctrl==="okuma")a("G71 P300 Q400 U0.3 W0.1 F"+rf+" S"+(p.useG96?mat.rough.Vc:roughRPM));
-    else a("G71 P300 Q400 U0.3 W0.1 F"+rf);}
+  if(ctrl!=="siemens"){a("G00 X"+(bar+2).toFixed(3)+" Z"+safe.toFixed(1));a(spdR+" M03");a("G71 U"+rd+" R"+(p.adv?.g71Retract||0.5));
+    if(ctrl==="okuma")a("G71 P300 Q400 U"+(p.adv?.g71FinishU||0.3)+" W"+(p.adv?.g71FinishW||0.1)+" F"+rf+" S"+(p.useG96?mat.rough.Vc:roughRPM));
+    else a("G71 P300 Q400 U"+(p.adv?.g71FinishU||0.3)+" W"+(p.adv?.g71FinishW||0.1)+" F"+rf);}
   else{a("G00 X"+(bar+2).toFixed(3)+" Z"+safe.toFixed(1));a(spdR+" M03");a('CYCLE95("CONTOUR1",'+rd+",0.3,0.1,,"+rf+",,,,0.5)");}b();
 
   // Contour for stepped shaft
@@ -484,8 +504,8 @@ GENERATORS.sleeve=function(p,ctrl,mat,coolM,safe,bar,tl,pw,thread){
 
   // OD rough/finish
   cm("═══ 粗車外徑 G71 ═══");
-  if(ctrl!=="siemens"){a("G00 X"+(bar+2).toFixed(3)+" Z"+safe.toFixed(1));a(spdR+" M03");a(coolM);a("G71 U"+rd+" R0.5");
-    a("G71 P300 Q400 U0.3 W0.1 F"+rf);}
+  if(ctrl!=="siemens"){a("G00 X"+(bar+2).toFixed(3)+" Z"+safe.toFixed(1));a(spdR+" M03");a(coolM);a("G71 U"+rd+" R"+(p.adv?.g71Retract||0.5));
+    a("G71 P300 Q400 U"+(p.adv?.g71FinishU||0.3)+" W"+(p.adv?.g71FinishW||0.1)+" F"+rf);}
   else{a("G00 X"+(bar+2).toFixed(3)+" Z"+safe.toFixed(1));a(spdR+" M03");a(coolM);a('CYCLE95("CONTOUR1",'+rd+",0.3,0.1,,"+rf+",,,,0.5)");}b();
   cm("═══ 輪廓 ═══");
   a("N300 G00 X"+(od-ch*2).toFixed(3)+" Z"+ch.toFixed(3));
@@ -499,7 +519,7 @@ GENERATORS.sleeve=function(p,ctrl,mat,coolM,safe,bar,tl,pw,thread){
   a("G00 X"+(bar+2).toFixed(3)+" Z"+safe.toFixed(1));b();
 
   // Drill
-  gcDrilling(ctrl,mat,safe,coolM,drillDia,boreDepth,p.boreType==="through").forEach(l=>a(l));
+  gcDrilling(ctrl,mat,safe,coolM,drillDia,boreDepth,p.boreType==="through",p.adv?.peckMult).forEach(l=>a(l));
   // Bore
   gcBoring(ctrl,mat,safe,coolM,boreDia,boreDepth,p.useG96).forEach(l=>a(l));
   // Inner chamfer
@@ -532,7 +552,7 @@ GENERATORS.threadedRod=function(p,ctrl,mat,coolM,safe,bar,tl,pw,thread){
 
   // OD rough to thread major
   cm("═══ 粗車至螺紋大徑 ═══");
-  if(ctrl!=="siemens"){a("G00 X"+(bar+2).toFixed(3)+" Z"+safe.toFixed(1));a(spdR+" M03");a(coolM);a("G71 U"+rd+" R0.5");a("G71 P300 Q400 U0.3 W0.1 F"+rf);}
+  if(ctrl!=="siemens"){a("G00 X"+(bar+2).toFixed(3)+" Z"+safe.toFixed(1));a(spdR+" M03");a(coolM);a("G71 U"+rd+" R"+(p.adv?.g71Retract||0.5));a("G71 P300 Q400 U"+(p.adv?.g71FinishU||0.3)+" W"+(p.adv?.g71FinishW||0.1)+" F"+rf);}
   else{a("G00 X"+(bar+2).toFixed(3)+" Z"+safe.toFixed(1));a(spdR+" M03");a(coolM);a('CYCLE95("CONTOUR1",'+rd+",0.3,0.1,,"+rf+",,,,0.5)");}b();
   cm("═══ 輪廓 ═══");
   a("N300 G00 X"+(sd-ch*2).toFixed(3)+" Z"+ch.toFixed(3));
@@ -566,7 +586,7 @@ GENERATORS.pin=function(p,ctrl,mat,coolM,safe,bar,tl,pw,thread){
   gcFacing(ctrl,mat,bar,p.useG96,safe,coolM).forEach(l=>a(l));
 
   cm("═══ 粗車外徑 G71 ═══");
-  if(ctrl!=="siemens"){a("G00 X"+(bar+2).toFixed(3)+" Z"+safe.toFixed(1));a(spdR+" M03");a(coolM);a("G71 U"+rd+" R0.5");a("G71 P300 Q400 U0.3 W0.1 F"+rf);}
+  if(ctrl!=="siemens"){a("G00 X"+(bar+2).toFixed(3)+" Z"+safe.toFixed(1));a(spdR+" M03");a(coolM);a("G71 U"+rd+" R"+(p.adv?.g71Retract||0.5));a("G71 P300 Q400 U"+(p.adv?.g71FinishU||0.3)+" W"+(p.adv?.g71FinishW||0.1)+" F"+rf);}
   else{a("G00 X"+(bar+2).toFixed(3)+" Z"+safe.toFixed(1));a(spdR+" M03");a(coolM);a('CYCLE95("CONTOUR1",'+rd+",0.3,0.1,,"+rf+",,,,0.5)");}b();
   cm("═══ 輪廓 ═══");
   a("N300 G00 X"+(od-ch*2).toFixed(3)+" Z"+ch.toFixed(3));
@@ -606,7 +626,7 @@ GENERATORS.fitting=function(p,ctrl,mat,coolM,safe,bar,tl,pw,thread){
 
   // OD contour: thread1 - hex - thread2
   cm("═══ 粗車外徑 G71 ═══");
-  if(ctrl!=="siemens"){a("G00 X"+(bar+2).toFixed(3)+" Z"+safe.toFixed(1));a(spdR+" M03");a(coolM);a("G71 U"+rd+" R0.5");a("G71 P300 Q400 U0.3 W0.1 F"+rf);}
+  if(ctrl!=="siemens"){a("G00 X"+(bar+2).toFixed(3)+" Z"+safe.toFixed(1));a(spdR+" M03");a(coolM);a("G71 U"+rd+" R"+(p.adv?.g71Retract||0.5));a("G71 P300 Q400 U"+(p.adv?.g71FinishU||0.3)+" W"+(p.adv?.g71FinishW||0.1)+" F"+rf);}
   else{a("G00 X"+(bar+2).toFixed(3)+" Z"+safe.toFixed(1));a(spdR+" M03");a(coolM);a('CYCLE95("CONTOUR1",'+rd+",0.3,0.1,,"+rf+",,,,0.5)");}b();
   cm("═══ 輪廓 ═══");
   const hexStart=-thLen1,hexEnd=-(thLen1+hexLen);
@@ -625,7 +645,7 @@ GENERATORS.fitting=function(p,ctrl,mat,coolM,safe,bar,tl,pw,thread){
   a("G00 X"+(bar+2).toFixed(3)+" Z"+safe.toFixed(1));b();
 
   // Drill through
-  gcDrilling(ctrl,mat,safe,coolM,drillDia,tl+2,true).forEach(l=>a(l));
+  gcDrilling(ctrl,mat,safe,coolM,drillDia,tl+2,true,p.adv?.peckMult).forEach(l=>a(l));
   gcBoring(ctrl,mat,safe,coolM,boreDia,tl+1,p.useG96).forEach(l=>a(l));
 
   // Thread end 1 (夾持端)
@@ -661,7 +681,7 @@ GENERATORS.flange=function(p,ctrl,mat,coolM,safe,bar,tl,pw,thread){
 
   // OD with optional hub
   cm("═══ 粗車外徑 G71 ═══");
-  if(ctrl!=="siemens"){a("G00 X"+(bar+2).toFixed(3)+" Z"+safe.toFixed(1));a(spdR+" M03");a(coolM);a("G71 U"+rd+" R0.5");a("G71 P300 Q400 U0.3 W0.1 F"+rf);}
+  if(ctrl!=="siemens"){a("G00 X"+(bar+2).toFixed(3)+" Z"+safe.toFixed(1));a(spdR+" M03");a(coolM);a("G71 U"+rd+" R"+(p.adv?.g71Retract||0.5));a("G71 P300 Q400 U"+(p.adv?.g71FinishU||0.3)+" W"+(p.adv?.g71FinishW||0.1)+" F"+rf);}
   else{a("G00 X"+(bar+2).toFixed(3)+" Z"+safe.toFixed(1));a(spdR+" M03");a(coolM);a('CYCLE95("CONTOUR1",'+rd+",0.3,0.1,,"+rf+",,,,0.5)");}b();
   cm("═══ 輪廓 ═══");
   if(hubD>0&&hubL>0){
@@ -683,7 +703,7 @@ GENERATORS.flange=function(p,ctrl,mat,coolM,safe,bar,tl,pw,thread){
 
   // Drill + bore
   if(boreDia>0){
-    gcDrilling(ctrl,mat,safe,coolM,drillDia,tl+1,true).forEach(l=>a(l));
+    gcDrilling(ctrl,mat,safe,coolM,drillDia,tl+1,true,p.adv?.peckMult).forEach(l=>a(l));
     gcBoring(ctrl,mat,safe,coolM,boreDia,tl+1,p.useG96).forEach(l=>a(l));
   }
   gcCutoff(ctrl,mat,bar,tl,pw,safe,coolM,p.useG96).forEach(l=>a(l));
@@ -706,7 +726,7 @@ GENERATORS.groovedShaft=function(p,ctrl,mat,coolM,safe,bar,tl,pw,thread){
   gcFacing(ctrl,mat,bar,p.useG96,safe,coolM).forEach(l=>a(l));
 
   cm("═══ 粗車外徑 G71 ═══");
-  if(ctrl!=="siemens"){a("G00 X"+(bar+2).toFixed(3)+" Z"+safe.toFixed(1));a(spdR+" M03");a(coolM);a("G71 U"+rd+" R0.5");a("G71 P300 Q400 U0.3 W0.1 F"+rf);}
+  if(ctrl!=="siemens"){a("G00 X"+(bar+2).toFixed(3)+" Z"+safe.toFixed(1));a(spdR+" M03");a(coolM);a("G71 U"+rd+" R"+(p.adv?.g71Retract||0.5));a("G71 P300 Q400 U"+(p.adv?.g71FinishU||0.3)+" W"+(p.adv?.g71FinishW||0.1)+" F"+rf);}
   else{a("G00 X"+(bar+2).toFixed(3)+" Z"+safe.toFixed(1));a(spdR+" M03");a(coolM);a('CYCLE95("CONTOUR1",'+rd+",0.3,0.1,,"+rf+",,,,0.5)");}b();
   cm("═══ 輪廓 ═══");
   a("N300 G00 X"+(od-ch*2).toFixed(3)+" Z"+ch.toFixed(3));
@@ -745,7 +765,7 @@ GENERATORS.internalThread=function(p,ctrl,mat,coolM,safe,bar,tl,pw,thread){
 
   // OD
   cm("═══ 粗車外徑 G71 ═══");
-  if(ctrl!=="siemens"){a("G00 X"+(bar+2).toFixed(3)+" Z"+safe.toFixed(1));a(spdR+" M03");a(coolM);a("G71 U"+rd+" R0.5");a("G71 P300 Q400 U0.3 W0.1 F"+rf);}
+  if(ctrl!=="siemens"){a("G00 X"+(bar+2).toFixed(3)+" Z"+safe.toFixed(1));a(spdR+" M03");a(coolM);a("G71 U"+rd+" R"+(p.adv?.g71Retract||0.5));a("G71 P300 Q400 U"+(p.adv?.g71FinishU||0.3)+" W"+(p.adv?.g71FinishW||0.1)+" F"+rf);}
   else{a("G00 X"+(bar+2).toFixed(3)+" Z"+safe.toFixed(1));a(spdR+" M03");a(coolM);a('CYCLE95("CONTOUR1",'+rd+",0.3,0.1,,"+rf+",,,,0.5)");}b();
   a("N300 G00 X"+(od-ch*2).toFixed(3)+" Z"+ch.toFixed(3));
   a("G01 X"+od.toFixed(3)+" Z0 F"+ff);a("G01 Z"+(-tl+ch).toFixed(3));
@@ -754,7 +774,7 @@ GENERATORS.internalThread=function(p,ctrl,mat,coolM,safe,bar,tl,pw,thread){
   else{a("T2D2");a(spdF+" M03");a('CYCLE95("CONTOUR1",0.05,0.02,0.02,,'+ff+",,,,0.2)");}
   a("G00 X"+(bar+2).toFixed(3)+" Z"+safe.toFixed(1));b();
 
-  gcDrilling(ctrl,mat,safe,coolM,drillDia,boreDepth,p.boreType==="through").forEach(l=>a(l));
+  gcDrilling(ctrl,mat,safe,coolM,drillDia,boreDepth,p.boreType==="through",p.adv?.peckMult).forEach(l=>a(l));
   gcBoring(ctrl,mat,safe,coolM,boreDia,boreDepth,p.useG96).forEach(l=>a(l));
   gcIntThread(ctrl,mat,thread,boreDia,thLen,0,safe).forEach(l=>a(l));
   gcCutoff(ctrl,mat,bar,tl,pw,safe,coolM,p.useG96).forEach(l=>a(l));
@@ -779,7 +799,7 @@ GENERATORS.taper=function(p,ctrl,mat,coolM,safe,bar,tl,pw,thread){
   gcFacing(ctrl,mat,bar,p.useG96,safe,coolM).forEach(l=>a(l));
 
   cm("═══ 粗車外徑 G71 ═══");
-  if(ctrl!=="siemens"){a("G00 X"+(bar+2).toFixed(3)+" Z"+safe.toFixed(1));a(spdR+" M03");a(coolM);a("G71 U"+rd+" R0.5");a("G71 P300 Q400 U0.3 W0.1 F"+rf);}
+  if(ctrl!=="siemens"){a("G00 X"+(bar+2).toFixed(3)+" Z"+safe.toFixed(1));a(spdR+" M03");a(coolM);a("G71 U"+rd+" R"+(p.adv?.g71Retract||0.5));a("G71 P300 Q400 U"+(p.adv?.g71FinishU||0.3)+" W"+(p.adv?.g71FinishW||0.1)+" F"+rf);}
   else{a("G00 X"+(bar+2).toFixed(3)+" Z"+safe.toFixed(1));a(spdR+" M03");a(coolM);a('CYCLE95("CONTOUR1",'+rd+",0.3,0.1,,"+rf+",,,,0.5)");}b();
   cm("═══ 錐面輪廓 ═══");
   a("N300 G00 X"+(d1-ch*2).toFixed(3)+" Z"+ch.toFixed(3));
@@ -820,7 +840,7 @@ GENERATORS.multiThread=function(p,ctrl,mat,coolM,safe,bar,tl,pw,thread){
 
   // OD rough/finish to thread major
   cm("═══ 粗車至螺紋大徑 ═══");
-  if(ctrl!=="siemens"){a("G00 X"+(bar+2).toFixed(3)+" Z"+safe.toFixed(1));a(spdR+" M03");a(coolM);a("G71 U"+rd+" R0.5");a("G71 P300 Q400 U0.3 W0.1 F"+rf);}
+  if(ctrl!=="siemens"){a("G00 X"+(bar+2).toFixed(3)+" Z"+safe.toFixed(1));a(spdR+" M03");a(coolM);a("G71 U"+rd+" R"+(p.adv?.g71Retract||0.5));a("G71 P300 Q400 U"+(p.adv?.g71FinishU||0.3)+" W"+(p.adv?.g71FinishW||0.1)+" F"+rf);}
   else{a("G00 X"+(bar+2).toFixed(3)+" Z"+safe.toFixed(1));a(spdR+" M03");a(coolM);a('CYCLE95("CONTOUR1",'+rd+",0.3,0.1,,"+rf+",,,,0.5)");}b();
   a("N300 G00 X"+(sd-ch*2).toFixed(3)+" Z"+ch.toFixed(3));
   a("G01 X"+sd.toFixed(3)+" Z0 F"+ff);a("G01 Z"+(-tl+ch).toFixed(3));
@@ -872,7 +892,7 @@ GENERATORS.ballShape=function(p,ctrl,mat,coolM,safe,bar,tl,pw,thread){
   gcFacing(ctrl,mat,bar,p.useG96,safe,coolM).forEach(l=>a(l));
 
   cm("═══ 粗車外徑 G71 ═══");
-  if(ctrl!=="siemens"){a("G00 X"+(bar+2).toFixed(3)+" Z"+safe.toFixed(1));a(spdR+" M03");a(coolM);a("G71 U"+rd+" R0.5");a("G71 P300 Q400 U0.3 W0.1 F"+rf);}
+  if(ctrl!=="siemens"){a("G00 X"+(bar+2).toFixed(3)+" Z"+safe.toFixed(1));a(spdR+" M03");a(coolM);a("G71 U"+rd+" R"+(p.adv?.g71Retract||0.5));a("G71 P300 Q400 U"+(p.adv?.g71FinishU||0.3)+" W"+(p.adv?.g71FinishW||0.1)+" F"+rf);}
   else{a("G00 X"+(bar+2).toFixed(3)+" Z"+safe.toFixed(1));a(spdR+" M03");a(coolM);a('CYCLE95("CONTOUR1",'+rd+",0.3,0.1,,"+rf+",,,,0.5)");}b();
   cm("═══ 球面輪廓 ═══");
   if(ballType==="convex"){
@@ -920,7 +940,7 @@ GENERATORS.faceGroove=function(p,ctrl,mat,coolM,safe,bar,tl,pw,thread){
 
   // OD simple
   cm("═══ 粗精車外徑 ═══");
-  if(ctrl!=="siemens"){a("G00 X"+(bar+2).toFixed(3)+" Z"+safe.toFixed(1));a(spdR+" M03");a(coolM);a("G71 U"+rd+" R0.5");a("G71 P300 Q400 U0.3 W0.1 F"+rf);}
+  if(ctrl!=="siemens"){a("G00 X"+(bar+2).toFixed(3)+" Z"+safe.toFixed(1));a(spdR+" M03");a(coolM);a("G71 U"+rd+" R"+(p.adv?.g71Retract||0.5));a("G71 P300 Q400 U"+(p.adv?.g71FinishU||0.3)+" W"+(p.adv?.g71FinishW||0.1)+" F"+rf);}
   else{a("G00 X"+(bar+2).toFixed(3)+" Z"+safe.toFixed(1));a(spdR+" M03");a(coolM);a('CYCLE95("CONTOUR1",'+rd+",0.3,0.1,,"+rf+",,,,0.5)");}b();
   a("N300 G00 X"+(od-ch*2).toFixed(3)+" Z"+ch.toFixed(3));a("G01 X"+od.toFixed(3)+" Z0 F"+ff);a("G01 Z"+(-tl+ch).toFixed(3));
   a("G01 X"+(od+ch*2).toFixed(3)+" Z"+(-tl).toFixed(3));a("N400 G01 X"+(bar+1).toFixed(3));b();
@@ -969,7 +989,7 @@ GENERATORS.faceThread=function(p,ctrl,mat,coolM,safe,bar,tl,pw,thread){
 
   // OD
   cm("═══ 粗精車外徑 ═══");
-  if(ctrl!=="siemens"){a("G00 X"+(bar+2).toFixed(3)+" Z"+safe.toFixed(1));a(spdR+" M03");a(coolM);a("G71 U"+rd+" R0.5");a("G71 P300 Q400 U0.3 W0.1 F"+rf);}
+  if(ctrl!=="siemens"){a("G00 X"+(bar+2).toFixed(3)+" Z"+safe.toFixed(1));a(spdR+" M03");a(coolM);a("G71 U"+rd+" R"+(p.adv?.g71Retract||0.5));a("G71 P300 Q400 U"+(p.adv?.g71FinishU||0.3)+" W"+(p.adv?.g71FinishW||0.1)+" F"+rf);}
   else{a("G00 X"+(bar+2).toFixed(3)+" Z"+safe.toFixed(1));a(spdR+" M03");a(coolM);a('CYCLE95("CONTOUR1",'+rd+",0.3,0.1,,"+rf+",,,,0.5)");}b();
   a("N300 G00 X"+(od-ch*2).toFixed(3)+" Z"+ch.toFixed(3));a("G01 X"+od.toFixed(3)+" Z0 F"+ff);a("G01 Z"+(-tl+ch).toFixed(3));
   a("G01 X"+(od+ch*2).toFixed(3)+" Z"+(-tl).toFixed(3));a("N400 G01 X"+(bar+1).toFixed(3));b();
@@ -1021,7 +1041,7 @@ GENERATORS.deepHole=function(p,ctrl,mat,coolM,safe,bar,tl,pw,thread){
 
   // OD
   cm("═══ 粗精車外徑 ═══");
-  if(ctrl!=="siemens"){a("G00 X"+(bar+2).toFixed(3)+" Z"+safe.toFixed(1));a(spdR+" M03");a(coolM);a("G71 U"+rd+" R0.5");a("G71 P300 Q400 U0.3 W0.1 F"+rf);}
+  if(ctrl!=="siemens"){a("G00 X"+(bar+2).toFixed(3)+" Z"+safe.toFixed(1));a(spdR+" M03");a(coolM);a("G71 U"+rd+" R"+(p.adv?.g71Retract||0.5));a("G71 P300 Q400 U"+(p.adv?.g71FinishU||0.3)+" W"+(p.adv?.g71FinishW||0.1)+" F"+rf);}
   else{a("G00 X"+(bar+2).toFixed(3)+" Z"+safe.toFixed(1));a(spdR+" M03");a(coolM);a('CYCLE95("CONTOUR1",'+rd+",0.3,0.1,,"+rf+",,,,0.5)");}b();
   a("N300 G00 X"+(od-ch*2).toFixed(3)+" Z"+ch.toFixed(3));a("G01 X"+od.toFixed(3)+" Z0 F"+ff);
   a("G01 Z"+(-tl+ch).toFixed(3));a("G01 X"+(od+ch*2).toFixed(3)+" Z"+(-tl).toFixed(3));a("N400 G01 X"+(bar+1).toFixed(3));b();
@@ -1089,7 +1109,7 @@ GENERATORS.dualEnd=function(p,ctrl,mat,coolM,safe,bar,tl,pw,thread){
   cm("════════════════════════════════");
   // First end OD
   cm("═══ 粗精車外徑 ═══");
-  if(ctrl!=="siemens"){a("G00 X"+(bar+2).toFixed(3)+" Z"+safe.toFixed(1));a(spdR+" M03");a(coolM);a("G71 U"+rd+" R0.5");a("G71 P300 Q400 U0.3 W0.1 F"+rf);}
+  if(ctrl!=="siemens"){a("G00 X"+(bar+2).toFixed(3)+" Z"+safe.toFixed(1));a(spdR+" M03");a(coolM);a("G71 U"+rd+" R"+(p.adv?.g71Retract||0.5));a("G71 P300 Q400 U"+(p.adv?.g71FinishU||0.3)+" W"+(p.adv?.g71FinishW||0.1)+" F"+rf);}
   else{a("G00 X"+(bar+2).toFixed(3)+" Z"+safe.toFixed(1));a(spdR+" M03");a(coolM);a('CYCLE95("CONTOUR1",'+rd+",0.3,0.1,,"+rf+",,,,0.5)");}b();
   a("N300 G00 X"+(od-ch*2).toFixed(3)+" Z"+ch.toFixed(3));a("G01 X"+od.toFixed(3)+" Z0 F"+ff);
   a("G01 Z"+(-tl+ch).toFixed(3));a("G01 X"+(od+ch*2).toFixed(3)+" Z"+(-tl).toFixed(3));a("N400 G01 X"+(bar+1).toFixed(3));b();
@@ -1130,7 +1150,7 @@ GENERATORS.dualEnd=function(p,ctrl,mat,coolM,safe,bar,tl,pw,thread){
   cm("═══ 第二端外徑 ═══");
   if(end2Dia<od){
     a("G00 X"+(od+2).toFixed(3)+" Z"+safe.toFixed(1));
-    a("G71 U"+rd+" R0.5");a("G71 P500 Q600 U0.3 W0.1 F"+rf);b();
+    a("G71 U"+rd+" R"+(p.adv?.g71Retract||0.5));a("G71 P500 Q600 U"+(p.adv?.g71FinishU||0.3)+" W"+(p.adv?.g71FinishW||0.1)+" F"+rf);b();
     a("N500 G00 X"+(end2Dia-ch*2).toFixed(3)+" Z"+ch.toFixed(3));
     a("G01 X"+end2Dia.toFixed(3)+" Z0 F"+ff);
     a("G01 Z"+(-end2Len).toFixed(3));a("G01 X"+od.toFixed(3));
@@ -1183,7 +1203,7 @@ GENERATORS.millFlat=function(p,ctrl,mat,coolM,safe,bar,tl,pw,thread){
 
   // OD
   cm("═══ 粗精車外徑 ═══");
-  if(ctrl!=="siemens"){a("G00 X"+(bar+2).toFixed(3)+" Z"+safe.toFixed(1));a(spdR+" M03");a(coolM);a("G71 U"+rd+" R0.5");a("G71 P300 Q400 U0.3 W0.1 F"+rf);}
+  if(ctrl!=="siemens"){a("G00 X"+(bar+2).toFixed(3)+" Z"+safe.toFixed(1));a(spdR+" M03");a(coolM);a("G71 U"+rd+" R"+(p.adv?.g71Retract||0.5));a("G71 P300 Q400 U"+(p.adv?.g71FinishU||0.3)+" W"+(p.adv?.g71FinishW||0.1)+" F"+rf);}
   else{a("G00 X"+(bar+2).toFixed(3)+" Z"+safe.toFixed(1));a(spdR+" M03");a(coolM);a('CYCLE95("CONTOUR1",'+rd+",0.3,0.1,,"+rf+",,,,0.5)");}b();
   a("N300 G00 X"+(od-ch*2).toFixed(3)+" Z"+ch.toFixed(3));a("G01 X"+od.toFixed(3)+" Z0 F"+ff);a("G01 Z"+(-tl+ch).toFixed(3));
   a("G01 X"+(od+ch*2).toFixed(3)+" Z"+(-tl).toFixed(3));a("N400 G01 X"+(bar+1).toFixed(3));b();
@@ -1252,7 +1272,7 @@ GENERATORS.sideHole=function(p,ctrl,mat,coolM,safe,bar,tl,pw,thread){
 
   // OD
   cm("═══ 粗精車外徑 ═══");
-  if(ctrl!=="siemens"){a("G00 X"+(bar+2).toFixed(3)+" Z"+safe.toFixed(1));a(spdR+" M03");a(coolM);a("G71 U"+rd+" R0.5");a("G71 P300 Q400 U0.3 W0.1 F"+rf);}
+  if(ctrl!=="siemens"){a("G00 X"+(bar+2).toFixed(3)+" Z"+safe.toFixed(1));a(spdR+" M03");a(coolM);a("G71 U"+rd+" R"+(p.adv?.g71Retract||0.5));a("G71 P300 Q400 U"+(p.adv?.g71FinishU||0.3)+" W"+(p.adv?.g71FinishW||0.1)+" F"+rf);}
   else{a("G00 X"+(bar+2).toFixed(3)+" Z"+safe.toFixed(1));a(spdR+" M03");a(coolM);a('CYCLE95("CONTOUR1",'+rd+",0.3,0.1,,"+rf+",,,,0.5)");}b();
   a("N300 G00 X"+(od-ch*2).toFixed(3)+" Z"+ch.toFixed(3));a("G01 X"+od.toFixed(3)+" Z0 F"+ff);a("G01 Z"+(-tl+ch).toFixed(3));
   a("G01 X"+(od+ch*2).toFixed(3)+" Z"+(-tl).toFixed(3));a("N400 G01 X"+(bar+1).toFixed(3));b();
@@ -1314,7 +1334,7 @@ GENERATORS.hexMill=function(p,ctrl,mat,coolM,safe,bar,tl,pw,thread){
 
   // OD
   cm("═══ 粗精車外徑 ═══");
-  if(ctrl!=="siemens"){a("G00 X"+(bar+2).toFixed(3)+" Z"+safe.toFixed(1));a(spdR+" M03");a(coolM);a("G71 U"+rd+" R0.5");a("G71 P300 Q400 U0.3 W0.1 F"+rf);}
+  if(ctrl!=="siemens"){a("G00 X"+(bar+2).toFixed(3)+" Z"+safe.toFixed(1));a(spdR+" M03");a(coolM);a("G71 U"+rd+" R"+(p.adv?.g71Retract||0.5));a("G71 P300 Q400 U"+(p.adv?.g71FinishU||0.3)+" W"+(p.adv?.g71FinishW||0.1)+" F"+rf);}
   else{a("G00 X"+(bar+2).toFixed(3)+" Z"+safe.toFixed(1));a(spdR+" M03");a(coolM);a('CYCLE95("CONTOUR1",'+rd+",0.3,0.1,,"+rf+",,,,0.5)");}b();
   a("N300 G00 X"+(od-ch*2).toFixed(3)+" Z"+ch.toFixed(3));a("G01 X"+od.toFixed(3)+" Z0 F"+ff);a("G01 Z"+(-tl+ch).toFixed(3));
   a("G01 X"+(od+ch*2).toFixed(3)+" Z"+(-tl).toFixed(3));a("N400 G01 X"+(bar+1).toFixed(3));b();
@@ -1411,7 +1431,7 @@ function getSetupTools(p){
 
 // ═══ CYCLE TIME ═══
 function calcCycleTime(p){
-  const mat=MATERIALS[p.material]||MATERIALS["S45C 中碳鋼"];
+  const mat=getEffectiveMat(p);
   const bar=p.barDiameter||12,tl=p.totalLength||30;
   let od=bar-2;
   if(p.partType==="screw")od=p.shankDiameter||8;
@@ -1455,26 +1475,32 @@ function validateParams(p){
   const pt=p.partType;
   if(p.barDiameter<=0)e.push("棒材直徑必須>0");
   if(p.totalLength<=0)e.push("總長度必須>0");
+  // Universal: bar must be > max OD
+  const maxOD=Math.max(p.outerDiameter||0,p.headDiameter||0,p.shankDiameter||0,p.fittingHexDia||0);
+  if(maxOD>0&&p.barDiameter<=maxOD)e.push("棒材直徑(Ø"+p.barDiameter+")必須大於最大外徑(Ø"+maxOD+")");
   if(pt==="screw"){
-    if(p.barDiameter<=(p.headDiameter||0))e.push("棒材直徑必須大於頭部直徑");
-    if(p.barDiameter<=(p.shankDiameter||0))e.push("棒材直徑必須大於桿部直徑");
     if((p.threadLength||0)>p.totalLength)e.push("螺紋長度不能超過總長度");
   }
-  if(pt==="sleeve"||pt==="internalThread"||pt==="fitting"||pt==="flange"){
-    if((p.boreDiameter||0)>=(p.outerDiameter||p.barDiameter))e.push("內孔直徑必須小於外徑");
+  if(["sleeve","internalThread","fitting","flange","deepHole"].includes(pt)){
+    if((p.boreDiameter||0)>=(p.outerDiameter||p.barDiameter))e.push("內孔直徑(Ø"+p.boreDiameter+")必須小於外徑(Ø"+(p.outerDiameter||p.barDiameter)+")");
+    if((p.boreDiameter||0)<=0)e.push("內孔直徑必須>0");
   }
   if(pt==="shaft"&&p.shaftSteps){
-    p.shaftSteps.forEach((s,i)=>{if(s.diameter>=p.barDiameter)w.push("段"+(i+1)+"直徑≥棒材直徑");});
+    p.shaftSteps.forEach((s,i)=>{if(s.diameter>=p.barDiameter)e.push("段"+(i+1)+"直徑(Ø"+s.diameter+")≥棒材直徑(Ø"+p.barDiameter+")");});
     const sumL=p.shaftSteps.reduce((a,s)=>a+s.length,0);
     if(Math.abs(sumL-p.totalLength)>0.5)w.push("各段長度合計("+sumL.toFixed(1)+")與總長("+p.totalLength+")不符");
   }
   if(pt==="taper"){
     const tStd=p.taperStandard?TAPER_STDS[p.taperStandard]:null;
     const d1=tStd?tStd.d1:(p.taperD1||20);
-    if(d1>=p.barDiameter)e.push("錐面大徑必須小於棒材直徑");
+    if(d1>=p.barDiameter)e.push("錐面大徑(Ø"+d1+")必須小於棒材直徑(Ø"+p.barDiameter+")");
   }
-  const mat=MATERIALS[p.material];
-  if(mat){const rpm=calcRPM(mat.finish.Vc,p.outerDiameter||p.shankDiameter||8);if(rpm>4000)w.push("精車轉速可能達"+rpm+"RPM，確認主軸上限");}
+  if(pt==="deepHole"&&p.boreDiameter>0&&p.boreDepth>0){
+    const ld=p.boreDepth/p.boreDiameter;
+    if(ld>10)w.push("L/D="+ld.toFixed(1)+" 極深孔，建議使用Gun drill或BTA");
+  }
+  const mat=getEffectiveMat(p);
+  if(mat){const rpm=calcRPM(mat.finish.Vc,p.outerDiameter||p.shankDiameter||8);if(rpm>(p.maxRPM||3500))w.push("精車轉速"+rpm+"RPM 超過主軸上限"+p.maxRPM+"RPM");}
   if(p.barDiameter>42)w.push("棒材>Ø42mm，確認夾頭容量");
   return{warnings:w,errors:e};
 }
@@ -1673,6 +1699,16 @@ function App(){
     tolerance:0.02,safeZ:5,partOffWidth:3,threadInfeed:"compound",
     useG96:true,maxRPM:3500,coolantType:"water",useTNRC:true,
     addCenterDrill:false,centerDrillDepth:3,
+    // custom cutting overrides
+    useCustomCut:false,
+    customCut:{
+      roughVc:0,roughF:0,roughAp:0,
+      finishVc:0,finishF:0,finishAp:0,
+      threadVc:0,
+      cutoffVc:0,cutoffF:0,
+      drillVc:0,drillF:0,
+      boreVc:0,boreF:0,boreAp:0
+    },
     // multiThread
     threadStarts:2,
     // ballShape
@@ -1695,7 +1731,17 @@ function App(){
   const[p,setP]=useState(defaultP);
   const[gcode,setGcode]=useState("");
 
-  const u=(k,v)=>setP(prev=>({...prev,[k]:v}));
+  const u=(k,v)=>setP(prev=>{
+    const next={...prev,[k]:v};
+    // Auto-sync: if any diameter exceeds bar, bump bar up
+    const maxOD=Math.max(next.outerDiameter||0,next.headDiameter||0,next.shankDiameter||0,next.fittingHexDia||0,next.end2Diameter||0);
+    if(maxOD>0&&maxOD>=next.barDiameter){next.barDiameter=Math.ceil(maxOD)+2;}
+    // shaft steps
+    if(next.shaftSteps){const maxStep=Math.max(...next.shaftSteps.map(s=>s.diameter||0));if(maxStep>=next.barDiameter)next.barDiameter=Math.ceil(maxStep)+2;}
+    // taper
+    if(next.taperStandard&&TAPER_STDS[next.taperStandard]){const ts=TAPER_STDS[next.taperStandard];if(!ts.custom&&ts.d1>=next.barDiameter)next.barDiameter=Math.ceil(ts.d1)+2;}
+    return next;
+  });
   const uN=k=>e=>u(k,parseFloat(e.target.value)||0);
   const thSpecs=useMemo(()=>p.threadCategory&&THREAD_DB[p.threadCategory]?Object.keys(THREAD_DB[p.threadCategory]):[],[p.threadCategory]);
   const val=useMemo(()=>validateParams(p),[p]);
@@ -1708,7 +1754,7 @@ function App(){
     try{const res=await fetch(API_URL+"/api/analyze",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({image:b64,media_type:fileType})});
       const data=await res.json();if(data.error)throw new Error(data.error);
       const txt=data.result||"";const parsed=JSON.parse(txt.replace(/```json|```/g,"").trim());setAiRes(parsed);
-      setP(prev=>({...prev,...(parsed.threadCategory?{threadCategory:parsed.threadCategory}:{}),...(parsed.threadSpec?{threadSpec:parsed.threadSpec}:{}),...(parsed.totalLength?{totalLength:parsed.totalLength}:{}),...(parsed.headDiameter?{headDiameter:parsed.headDiameter}:{}),...(parsed.headLength?{headLength:parsed.headLength}:{}),...(parsed.shankDiameter?{shankDiameter:parsed.shankDiameter,barDiameter:Math.ceil(parsed.shankDiameter)+2}:{}),...(parsed.threadLength?{threadLength:parsed.threadLength}:{})}));
+      // AI results shown as suggestions — user must confirm before applying
     }catch(err){setAiErr("AI分析失敗: "+err.message);}setBusy(false);
   },[b64,fileType]);
 
@@ -1802,11 +1848,39 @@ function App(){
         img&&!aiRes&&E("button",{onClick:analyze,disabled:busy,style:{...B1,marginTop:12,width:"100%",opacity:busy?0.5:1}},busy?"⏳ AI 分析中...":"🔍 AI 辨識圖紙"),
         aiErr&&E("div",{style:{marginTop:8,padding:8,background:"#140808",border:"1px solid #301818",borderRadius:4,color:"#d04040",fontSize:11}},aiErr),
         aiRes&&E("div",{style:{marginTop:12,padding:12,background:"#061008",border:"1px solid #183018",borderRadius:5}},
-          E("div",{style:{fontSize:11,fontWeight:700,color:"#40a060",marginBottom:8}},"✅ AI辨識完成"),
-          E("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:4,fontSize:11}},
-            aiRes.threadSpec&&E("div",null,E("span",{style:{color:"#406050"}},"螺紋: "),aiRes.threadSpec),
-            aiRes.totalLength&&E("div",null,E("span",{style:{color:"#406050"}},"總長: "),aiRes.totalLength),
-            aiRes.headDiameter&&E("div",null,E("span",{style:{color:"#406050"}},"頭徑: "),aiRes.headDiameter))),
+          E("div",{style:{fontSize:11,fontWeight:700,color:"#40a060",marginBottom:4}},"🤖 AI辨識結果 (建議值，請確認後套用)"),
+          E("div",{style:{fontSize:9,color:"#406050",marginBottom:8}},"AI可能誤判，請逐項檢查。不正確的可直接修改，確認後按套用。"),
+          aiRes.partType&&E("div",{style:{marginBottom:6,fontSize:11}},E("span",{style:{color:"#406050"}},"零件類型: "),E("span",{style:{color:"#e0e8f0",fontWeight:700}},PART_TYPES[aiRes.partType]?.name||aiRes.partType)),
+          E("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6,fontSize:11}},
+            aiRes.threadSpec&&E("div",null,E("span",{style:{color:"#406050"}},"螺紋: "),E("span",{style:{color:"#e0e8f0"}},aiRes.threadSpec)),
+            aiRes.totalLength&&E("div",null,E("span",{style:{color:"#406050"}},"總長: "),E("span",{style:{color:"#e0e8f0"}},aiRes.totalLength)),
+            aiRes.outerDiameter&&E("div",null,E("span",{style:{color:"#406050"}},"外徑: "),E("span",{style:{color:"#f0803c"}},aiRes.outerDiameter)),
+            aiRes.boreDiameter&&E("div",null,E("span",{style:{color:"#406050"}},"內徑: "),E("span",{style:{color:"#f0803c"}},aiRes.boreDiameter)),
+            aiRes.headDiameter&&E("div",null,E("span",{style:{color:"#406050"}},"頭徑: "),E("span",{style:{color:"#e0e8f0"}},aiRes.headDiameter)),
+            aiRes.shankDiameter&&E("div",null,E("span",{style:{color:"#406050"}},"桿徑: "),E("span",{style:{color:"#e0e8f0"}},aiRes.shankDiameter)),
+            aiRes.threadLength&&E("div",null,E("span",{style:{color:"#406050"}},"牙長: "),E("span",{style:{color:"#e0e8f0"}},aiRes.threadLength)),
+            aiRes.chamferSize&&E("div",null,E("span",{style:{color:"#406050"}},"倒角: "),E("span",{style:{color:"#e0e8f0"}},aiRes.chamferSize))),
+          aiRes.notes&&E("div",{style:{marginTop:6,fontSize:10,color:"#508060"}},"備註: "+aiRes.notes),
+          E("div",{style:{display:"flex",gap:8,marginTop:10}},
+            E("button",{onClick:()=>{
+              const r=aiRes;
+              setP(prev=>{const n={...prev};
+                if(r.partType&&PART_TYPES[r.partType])n.partType=r.partType;
+                if(r.threadCategory)n.threadCategory=r.threadCategory;
+                if(r.threadSpec)n.threadSpec=r.threadSpec;
+                if(r.totalLength)n.totalLength=r.totalLength;
+                if(r.outerDiameter)n.outerDiameter=r.outerDiameter;
+                if(r.boreDiameter)n.boreDiameter=r.boreDiameter;
+                if(r.headDiameter)n.headDiameter=r.headDiameter;
+                if(r.headLength)n.headLength=r.headLength;
+                if(r.shankDiameter)n.shankDiameter=r.shankDiameter;
+                if(r.threadLength)n.threadLength=r.threadLength;
+                if(r.chamferSize)n.chamferSize=r.chamferSize;
+                const maxOD=Math.max(n.outerDiameter||0,n.headDiameter||0,n.shankDiameter||0);
+                if(maxOD>=n.barDiameter)n.barDiameter=Math.ceil(maxOD)+2;
+                return n;});
+            },style:{...B1,fontSize:11,padding:"6px 16px"}},"✅ 套用AI建議"),
+            E("button",{onClick:()=>setAiRes(null),style:{...B2,fontSize:11,padding:"6px 16px"}},"✕ 忽略"))),
         E("div",{style:{display:"flex",gap:8,marginTop:16,justifyContent:"space-between"}},
           E("button",{onClick:()=>setStep(0),style:B2},"← 上一步"),
           E("button",{onClick:()=>setStep(2),style:B1},(aiRes||img)?"下一步 →":"跳過 →"))),
@@ -1831,6 +1905,73 @@ function App(){
             E("div",null,"粗Vc="+MATERIALS[p.material].rough.Vc),E("div",null,"f="+MATERIALS[p.material].rough.f),
             E("div",null,"精Vc="+MATERIALS[p.material].finish.Vc),E("div",null,"f="+MATERIALS[p.material].finish.f),
             E("div",null,"搪孔Vc="+MATERIALS[p.material].bore.Vc),E("div",null,MATERIALS[p.material].hardness))),
+        // Custom cutting param overrides
+        E("div",{style:{...CD,marginTop:12}},
+          E("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:p.useCustomCut?10:0}},
+            E("div",{style:CT},"🛠 自訂切削參數"),
+            E("label",{style:{display:"flex",alignItems:"center",gap:6,fontSize:11,cursor:"pointer",color:p.useCustomCut?"#f0803c":"#3a4a5a"}},
+              E("input",{type:"checkbox",checked:p.useCustomCut,onChange:e=>u("useCustomCut",e.target.checked)}),
+              p.useCustomCut?"已啟用 — 覆蓋材質庫預設值":"使用材質庫預設值")),
+          p.useCustomCut&&E("div",null,
+            E("div",{style:{fontSize:9,color:"#4a5a6a",marginBottom:8}},"填 0 或留空 = 使用材質庫預設值。只改需要調整的項目即可。"),
+            E("div",{style:{display:"grid",gridTemplateColumns:"auto 1fr 1fr 1fr",gap:6,alignItems:"center"}},
+              E("div",{style:{fontSize:10,color:"#5a6a7a",fontWeight:700}},"粗車"),
+              E(Field,{label:"Vc m/min"},E("input",{type:"number",step:"1",value:p.customCut.roughVc||"",placeholder:""+(MATERIALS[p.material]?.rough.Vc||""),onChange:e=>setP(prev=>({...prev,customCut:{...prev.customCut,roughVc:parseFloat(e.target.value)||0}})),style:IS})),
+              E(Field,{label:"f mm/rev"},E("input",{type:"number",step:"0.01",value:p.customCut.roughF||"",placeholder:""+(MATERIALS[p.material]?.rough.f||""),onChange:e=>setP(prev=>({...prev,customCut:{...prev.customCut,roughF:parseFloat(e.target.value)||0}})),style:IS})),
+              E(Field,{label:"ap mm"},E("input",{type:"number",step:"0.1",value:p.customCut.roughAp||"",placeholder:""+(MATERIALS[p.material]?.rough.ap||""),onChange:e=>setP(prev=>({...prev,customCut:{...prev.customCut,roughAp:parseFloat(e.target.value)||0}})),style:IS})),
+
+              E("div",{style:{fontSize:10,color:"#5a6a7a",fontWeight:700}},"精車"),
+              E(Field,{label:"Vc"},E("input",{type:"number",step:"1",value:p.customCut.finishVc||"",placeholder:""+(MATERIALS[p.material]?.finish.Vc||""),onChange:e=>setP(prev=>({...prev,customCut:{...prev.customCut,finishVc:parseFloat(e.target.value)||0}})),style:IS})),
+              E(Field,{label:"f"},E("input",{type:"number",step:"0.01",value:p.customCut.finishF||"",placeholder:""+(MATERIALS[p.material]?.finish.f||""),onChange:e=>setP(prev=>({...prev,customCut:{...prev.customCut,finishF:parseFloat(e.target.value)||0}})),style:IS})),
+              E(Field,{label:"ap"},E("input",{type:"number",step:"0.05",value:p.customCut.finishAp||"",placeholder:""+(MATERIALS[p.material]?.finish.ap||""),onChange:e=>setP(prev=>({...prev,customCut:{...prev.customCut,finishAp:parseFloat(e.target.value)||0}})),style:IS})),
+
+              E("div",{style:{fontSize:10,color:"#5a6a7a",fontWeight:700}},"螺紋"),
+              E(Field,{label:"Vc"},E("input",{type:"number",step:"1",value:p.customCut.threadVc||"",placeholder:""+(MATERIALS[p.material]?.thread.Vc||""),onChange:e=>setP(prev=>({...prev,customCut:{...prev.customCut,threadVc:parseFloat(e.target.value)||0}})),style:IS})),
+              E("div"),E("div"),
+
+              E("div",{style:{fontSize:10,color:"#5a6a7a",fontWeight:700}},"切斷"),
+              E(Field,{label:"Vc"},E("input",{type:"number",step:"1",value:p.customCut.cutoffVc||"",placeholder:""+(MATERIALS[p.material]?.cutoff.Vc||""),onChange:e=>setP(prev=>({...prev,customCut:{...prev.customCut,cutoffVc:parseFloat(e.target.value)||0}})),style:IS})),
+              E(Field,{label:"f"},E("input",{type:"number",step:"0.01",value:p.customCut.cutoffF||"",placeholder:""+(MATERIALS[p.material]?.cutoff.f||""),onChange:e=>setP(prev=>({...prev,customCut:{...prev.customCut,cutoffF:parseFloat(e.target.value)||0}})),style:IS})),
+              E("div"),
+
+              E("div",{style:{fontSize:10,color:"#5a6a7a",fontWeight:700}},"鑽孔"),
+              E(Field,{label:"Vc"},E("input",{type:"number",step:"1",value:p.customCut.drillVc||"",placeholder:""+(MATERIALS[p.material]?.drill.Vc||""),onChange:e=>setP(prev=>({...prev,customCut:{...prev.customCut,drillVc:parseFloat(e.target.value)||0}})),style:IS})),
+              E(Field,{label:"f"},E("input",{type:"number",step:"0.01",value:p.customCut.drillF||"",placeholder:""+(MATERIALS[p.material]?.drill.f||""),onChange:e=>setP(prev=>({...prev,customCut:{...prev.customCut,drillF:parseFloat(e.target.value)||0}})),style:IS})),
+              E("div"),
+
+              E("div",{style:{fontSize:10,color:"#5a6a7a",fontWeight:700}},"搪孔"),
+              E(Field,{label:"Vc"},E("input",{type:"number",step:"1",value:p.customCut.boreVc||"",placeholder:""+(MATERIALS[p.material]?.bore.Vc||""),onChange:e=>setP(prev=>({...prev,customCut:{...prev.customCut,boreVc:parseFloat(e.target.value)||0}})),style:IS})),
+              E(Field,{label:"f"},E("input",{type:"number",step:"0.01",value:p.customCut.boreF||"",placeholder:""+(MATERIALS[p.material]?.bore.f||""),onChange:e=>setP(prev=>({...prev,customCut:{...prev.customCut,boreF:parseFloat(e.target.value)||0}})),style:IS})),
+              E(Field,{label:"ap"},E("input",{type:"number",step:"0.05",value:p.customCut.boreAp||"",placeholder:""+(MATERIALS[p.material]?.bore.ap||""),onChange:e=>setP(prev=>({...prev,customCut:{...prev.customCut,boreAp:parseFloat(e.target.value)||0}})),style:IS}))))),
+        // Advanced process params
+        E("div",{style:{...CD,marginTop:12}},
+          E("details",null,
+            E("summary",{style:{...CT,cursor:"pointer",userSelect:"none"}},"⚙️ 進階製程參數 (點擊展開)"),
+            E("div",{style:{fontSize:9,color:"#4a5a6a",marginBottom:8,marginTop:8}},"調整G71/G76/切斷/搪孔等循環的內部參數。一般情況使用預設值即可。"),
+            E("div",{style:{display:"grid",gridTemplateColumns:"auto 1fr 1fr 1fr",gap:6,alignItems:"center"}},
+              E("div",{style:{fontSize:10,color:"#5a6a7a",fontWeight:700}},"G71粗車"),
+              E(Field,{label:"精修留量U(X)"},E("input",{type:"number",step:"0.05",value:p.adv.g71FinishU,onChange:e=>setP(prev=>({...prev,adv:{...prev.adv,g71FinishU:parseFloat(e.target.value)||0.3}})),style:IS})),
+              E(Field,{label:"精修留量W(Z)"},E("input",{type:"number",step:"0.05",value:p.adv.g71FinishW,onChange:e=>setP(prev=>({...prev,adv:{...prev.adv,g71FinishW:parseFloat(e.target.value)||0.1}})),style:IS})),
+              E(Field,{label:"退刀量R"},E("input",{type:"number",step:"0.1",value:p.adv.g71Retract,onChange:e=>setP(prev=>({...prev,adv:{...prev.adv,g71Retract:parseFloat(e.target.value)||0.5}})),style:IS})),
+
+              E("div",{style:{fontSize:10,color:"#5a6a7a",fontWeight:700}},"G76螺紋"),
+              E(Field,{label:"彈刀次數"},E("input",{type:"number",step:"1",min:"0",max:"5",value:p.adv.g76Springs,onChange:e=>setP(prev=>({...prev,adv:{...prev.adv,g76Springs:parseInt(e.target.value)||2}})),style:IS})),
+              E(Field,{label:"精修餘量R"},E("input",{type:"number",step:"0.01",value:p.adv.g76FinishR,onChange:e=>setP(prev=>({...prev,adv:{...prev.adv,g76FinishR:parseFloat(e.target.value)||0.03}})),style:IS})),
+              E(Field,{label:"首刀深%"},E("input",{type:"number",step:"5",min:"10",max:"50",value:p.adv.g76FirstPct,onChange:e=>setP(prev=>({...prev,adv:{...prev.adv,g76FirstPct:parseInt(e.target.value)||30}})),style:IS})),
+
+              E("div",{style:{fontSize:10,color:"#5a6a7a",fontWeight:700}},"切斷"),
+              E(Field,{label:"慢速進給比"},E("input",{type:"number",step:"0.1",min:"0.3",max:"1.0",value:p.adv.cutoffSlowF,onChange:e=>setP(prev=>({...prev,adv:{...prev.adv,cutoffSlowF:parseFloat(e.target.value)||0.7}})),style:IS})),
+              E(Field,{label:"退屑位置%"},E("input",{type:"number",step:"5",min:"20",max:"60",value:p.adv.cutoffMidPct,onChange:e=>setP(prev=>({...prev,adv:{...prev.adv,cutoffMidPct:parseInt(e.target.value)||40}})),style:IS})),
+              E("div"),
+
+              E("div",{style:{fontSize:10,color:"#5a6a7a",fontWeight:700}},"搪孔"),
+              E(Field,{label:"粗搪留量mm"},E("input",{type:"number",step:"0.1",value:p.adv.boreStock,onChange:e=>setP(prev=>({...prev,adv:{...prev.adv,boreStock:parseFloat(e.target.value)||1.0}})),style:IS})),
+              E(Field,{label:"精搪進給比"},E("input",{type:"number",step:"0.1",min:"0.3",max:"1.0",value:p.adv.boreFinishF,onChange:e=>setP(prev=>({...prev,adv:{...prev.adv,boreFinishF:parseFloat(e.target.value)||0.6}})),style:IS})),
+              E("div"),
+
+              E("div",{style:{fontSize:10,color:"#5a6a7a",fontWeight:700}},"鑽孔"),
+              E(Field,{label:"啄鑽倍率"},E("input",{type:"number",step:"0.5",min:"0.5",max:"5",value:p.adv.peckMult,onChange:e=>setP(prev=>({...prev,adv:{...prev.adv,peckMult:parseFloat(e.target.value)||2.0}})),style:IS})),
+              E("div"),E("div")))),
         E("div",{style:{display:"flex",gap:8,marginTop:20,justifyContent:"space-between"}},
           E("button",{onClick:()=>setStep(1),style:B2},"← 上一步"),
           E("button",{onClick:()=>setStep(3),style:B1},"下一步 →"))),
@@ -2117,11 +2258,24 @@ function App(){
       step===4&&E("div",null,
         E("h2",{style:{fontSize:16,fontWeight:700,color:"#e0e8f0",marginBottom:4}},"程式輸出"),
         E("div",{style:{display:"flex",gap:4,marginBottom:10,flexWrap:"wrap"}},
-          [PART_TYPES[p.partType].name,p.controller,p.threadSpec||"",p.material,"L="+p.totalLength].filter(Boolean).map((t2,i)=>E("span",{key:i,style:{padding:"2px 6px",background:"#0a0e16",borderRadius:3,fontSize:9.5,color:["#f0803c","#5ba0f7","#56b6c2","#c678dd","#e8a838"][i]}},t2))),
+          [PART_TYPES[p.partType].name,p.controller,p.threadSpec||"",p.material,"L="+p.totalLength,p.useCustomCut?"自訂參數":""].filter(Boolean).map((t2,i)=>E("span",{key:i,style:{padding:"2px 6px",background:t2==="自訂參數"?"#1a0a06":"#0a0e16",borderRadius:3,fontSize:9.5,color:t2==="自訂參數"?"#ff6020":["#f0803c","#5ba0f7","#56b6c2","#c678dd","#e8a838"][i]}},t2))),
         E("div",{style:{display:"flex",gap:0,marginBottom:10,borderBottom:"1px solid #101820"}},
           [["gcode","G-Code"],["preview","零件圖"],["setup","刀具表"],["time","工時"]].map(([id,lb])=>E("button",{key:id,onClick:()=>setTab(id),style:{padding:"6px 14px",background:"transparent",border:"none",borderBottom:tab===id?"2px solid #f0803c":"2px solid transparent",color:tab===id?"#f0803c":"#3a4a5a",fontSize:11,cursor:"pointer",fontWeight:tab===id?700:400}},lb))),
 
         tab==="gcode"&&E("div",null,
+          E("div",{style:{padding:10,background:"#060a12",border:"1px solid #101820",borderRadius:4,marginBottom:10,fontSize:11}},
+            E("div",{style:{fontSize:10,fontWeight:700,color:"#5ba0f7",marginBottom:6}},"📋 程式使用尺寸確認"),
+            E("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:4}},
+              E("div",{style:{color:"#4a5a6a"}},"棒材: ",E("span",{style:{color:"#e0e8f0"}},("Ø"+p.barDiameter))),
+              E("div",{style:{color:"#4a5a6a"}},"總長: ",E("span",{style:{color:"#e0e8f0"}},(p.totalLength+"mm"))),
+              p.outerDiameter?E("div",{style:{color:"#4a5a6a"}},"外徑: ",E("span",{style:{color:"#f0803c",fontWeight:700}},("Ø"+p.outerDiameter))):null,
+              p.boreDiameter?E("div",{style:{color:"#4a5a6a"}},"內徑: ",E("span",{style:{color:"#f0803c",fontWeight:700}},("Ø"+p.boreDiameter))):null,
+              p.shankDiameter&&p.partType==="screw"?E("div",{style:{color:"#4a5a6a"}},"桿徑: ",E("span",{style:{color:"#f0803c",fontWeight:700}},("Ø"+p.shankDiameter))):null,
+              p.headDiameter&&p.partType==="screw"?E("div",{style:{color:"#4a5a6a"}},"頭徑: ",E("span",{style:{color:"#e0e8f0"}},("Ø"+p.headDiameter))):null,
+              p.threadSpec&&p.threadSpec!=="自訂"?E("div",{style:{color:"#4a5a6a"}},"螺紋: ",E("span",{style:{color:"#e0e8f0"}},p.threadSpec)):null,
+              E("div",{style:{color:"#4a5a6a"}},"切斷刀寬: ",E("span",{style:{color:"#e0e8f0"}},(p.partOffWidth+"mm"))),
+              E("div",{style:{color:"#4a5a6a"}},"倒角: ",E("span",{style:{color:"#e0e8f0"}},("C"+p.chamferSize)))),
+            p.useCustomCut&&E("div",{style:{marginTop:6,color:"#ff6020",fontSize:10}},"⚡ 使用自訂切削參數")),
           E(GCodeViewer,{code:gcode}),
           E("div",{style:{marginTop:10,padding:8,background:"#100e08",border:"1px solid #282418",borderRadius:4,fontSize:10.5,color:"#a09030"}},
             "⚠️ ",E("strong",null,"上機前："),"確認座標系、刀補值、安全高度。先空跑(DryRun/單節)確認。程式為參考基礎，需依實際調整。")),
